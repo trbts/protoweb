@@ -208,12 +208,21 @@ async function shareModal(pid) {
 // ---------- estrutura
 function shell(inner, active) {
   const adm = me.role === "adm", sec = JSON.parse(sessionStorage.getItem("sector") || "null");
-  const nav = (h, t, k, b) => `<a href="${h}" class="${active === k ? "on" : ""}">${t}${b ? `<span class="nbadge" id="${b}" hidden></span>` : ""}</a>`;
-  $("#app").innerHTML = `<div class="shell"><aside class="side"><div class="brand">ProtoWeb</div><nav>
+  const tag = sec && !adm ? `<span class="tag">Setor: ${esc(sec.name)}</span>` : "";
+  const sig = me.id + "|" + sectors.map((x) => x.id).join(",");
+  const cur = $("#app .shell");
+  if (cur && cur.dataset.sig === sig) { // mesma estrutura: só troca o conteúdo e a aba ativa, com transição
+    cur.querySelectorAll(".side nav a").forEach((a) => a.classList.toggle("on", a.dataset.k === active));
+    $(".tagwrap", cur).innerHTML = tag;
+    const mn = $("main", cur); mn.classList.remove("fade"); mn.innerHTML = inner; void mn.offsetWidth; mn.classList.add("fade");
+    window.scrollTo(0, 0); paintBadge(); return;
+  }
+  const nav = (h, t, k, b) => `<a href="${h}" data-k="${k}" class="${active === k ? "on" : ""}">${t}${b ? `<span class="nbadge" id="${b}" hidden></span>` : ""}</a>`;
+  $("#app").innerHTML = `<div class="shell" data-sig="${sig}"><header class="top"><span class="brandbar"><img class="logo" src="logo.svg" alt="Brasão de Careiro"><span class="org">Prefeitura Municipal de Careiro</span><span class="tagwrap">${tag}</span></span><span class="who">${esc(me.name)} (${esc(me.email)}) <button class="link" id="out">Sair</button></span></header>
+    <div class="body"><aside class="side"><nav>
     ${adm ? nav("#/central", "Painel", "p") + nav("#/central/protocolos", "Protocolos", "l", "nb-prot") + nav("#/central/novo", "Novo protocolo", "n") + nav("#/central/setores", "Setores", "s") + nav("#/central/usuarios", "Usuários", "u") : ""}
-    ${adm ? "" : sectors.length > 1 ? sectors.map((s) => nav("#/setor/" + s.id, esc(s.name), "m" + s.id, "nb-s" + s.id)).join("") : nav("#/setores", "Caixa de entrada", "m", "nb-set")}${nav("#/config", "Configurações", "c")}</nav></aside>
-    <div><header class="top"><span class="brandbar"><img class="logo" src="logo.svg" alt="Brasão de Careiro"><span class="org">Prefeitura Municipal de Careiro</span>${sec && !adm ? `<span class="tag">Setor: ${esc(sec.name)}</span>` : ""}</span><span class="who">${esc(me.name)} (${esc(me.email)}) <button class="link" id="out">Sair</button></span></header>
-    <main>${inner}</main></div></div>`;
+    ${adm ? "" : sectors.length > 1 ? sectors.map((x) => nav("#/setor/" + x.id, esc(x.name), "m" + x.id, "nb-s" + x.id)).join("") : nav("#/setores", "Caixa de entrada", "m", "nb-set")}${nav("#/config", "Configurações", "c")}</nav></aside>
+    <main class="fade">${inner}</main></div></div>`;
   $("#out").onclick = logout;
   paintBadge();
 }
