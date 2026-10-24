@@ -149,3 +149,15 @@ body.modal-open{overflow:hidden}
 .side{border-right:1px solid #000}
 .brand{border-bottom:1px solid #000}
 .top{border-bottom:1px solid #000}
+.shell{display:block}
+.body{display:grid;grid-template-columns:232px minmax(0,1fr);min-height:calc(100vh - 60px)}
+.top{position:sticky;top:0;z-index:20}
+.side{position:sticky;top:60px;height:calc(100vh - 60px);overflow:auto}
+.side nav a{border:1px solid rgba(58,13,77,.55);transition:background-color .25s ease,color .25s ease,border-color .25s ease,transform .25s ease,box-shadow .25s ease;margin-bottom:8px}
+.side nav a:hover{transform:translateX(3px)}
+.side nav a.on{border-color:#fff;box-shadow:0 2px 8px rgba(58,13,77,.25)}
+.tagwrap:empty{display:none}
+main.fade{animation:pgIn .3s ease both}
+@keyframes pgIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@media(max-width:900px){.body{grid-template-columns:1fr}.side{position:static;height:auto;padding:12px}.side nav{display:flex;flex-wrap:wrap;gap:6px}.side nav a{margin-bottom:0}.top{position:static}}
+@media(prefers-reduced-motion:reduce){main.fade{animation:none}.side nav a{transition:none}}
