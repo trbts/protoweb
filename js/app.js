@@ -27,6 +27,7 @@ const two = (d) => (d ? `<span class="d">${new Date(d).toLocaleDateString("pt-BR
 const chip = (s) => `<span class="chip ${s}">${LABEL[s] || s}</span>`;
 
 let me = null, sectors = [], busy = 0;
+const secKey = (id) => (sectors.length > 1 ? "m" + id : "m"); // item ativo do menu do usuário de setor
 
 // ---------- utilidades
 function toast(msg, err) {
@@ -187,18 +188,18 @@ function profileModal() { // aparece no login do usuário de setor até o cadast
 async function shareModal(pid) {
   const d = await api(`/api/protocols/${pid}/share`), base = location.origin + location.pathname;
   const tpl = "Olá, {nome}! A Prefeitura Municipal de Careiro encaminhou o protocolo {protocolo} ao setor {setor}.\n\nPara ver o documento, acesse o ProtoWeb: {link}\n(É preciso entrar com a sua conta Google.)";
+  const build = (u, sector, rid) => tpl.replace(/\{nome\}/g, () => u.name || "").replace(/\{setor\}/g, () => sector).replace(/\{protocolo\}/g, () => d.protocol_number).replace(/\{link\}/g, () => `${base}#/p/${rid}`);
   const contacts = [];
   const rows = d.sectors.map((sc) => `<h2 style="margin-top:14px;font-size:15px">${esc(sc.sector)}</h2>` + (sc.users.length ? sc.users.map((u) => {
-    if (!u.phone) return `<div class="ct"><span>${esc(u.name)}</span><span class="muted">sem número cadastrado</span></div>`;
+    if (!u.phone) return `<div class="ct"><div><b>${esc(u.name)}</b><div class="muted">sem número cadastrado</div></div></div>`;
     contacts.push({ u, sector: sc.sector, rid: sc.rid });
-    return `<div class="ct"><span>${esc(u.name)} <span class="muted">${esc(fmtPhone(u.phone))}</span></span><button class="btn sm" data-c="${contacts.length - 1}">Enviar no WhatsApp</button></div>`;
+    return `<div class="ct"><div class="ci"><b>${esc(u.name)}</b> <span class="muted">${esc(fmtPhone(u.phone))}</span><div class="wmsg">${esc(build(u, sc.sector, sc.rid))}</div></div><button class="btn sm" data-c="${contacts.length - 1}">Enviar no WhatsApp</button></div>`;
   }).join("") : `<p class="muted">Nenhum usuário vinculado a este setor.</p>`)).join("");
-  const m = dialog(`<h2>Avisar por WhatsApp</h2><p class="muted">Protocolo ${esc(d.protocol_number)} enviado. Cada botão abre o WhatsApp com a mensagem pronta.</p>
-    <div class="field"><label for="wt">Mensagem</label><textarea id="wt">${esc(tpl)}</textarea><div class="note">Use {nome}, {setor}, {protocolo} e {link}: cada pessoa recebe a mensagem com os próprios dados. O link abre o protocolo no ProtoWeb: entra quem estiver conectado com uma conta que tenha acesso ao setor; os outros não conseguem ver o documento.</div></div>${rows}`, {});
+  const m = dialog(`<h2>Avisar por WhatsApp</h2><p class="muted">Protocolo ${esc(d.protocol_number)} enviado. Cada botão abre o WhatsApp com a mensagem pronta.</p>${rows}`, {});
   m.querySelectorAll("[data-c]").forEach((b) => (b.onclick = () => {
     const { u, sector, rid } = contacts[b.dataset.c];
-    const msg = $("#wt", m).value.replace(/\{nome\}/g, () => u.name || "").replace(/\{setor\}/g, () => sector).replace(/\{protocolo\}/g, () => d.protocol_number).replace(/\{link\}/g, () => `${base}#/p/${rid}`);
-    window.open(`https://wa.me/${u.phone}?text=${encodeURIComponent(msg)}`, "_blank", "noopener");
+    window.open(`https://wa.me/${u.phone}?text=${encodeURIComponent(build(u, sector, rid))}`, "_blank", "noopener");
+    m.remove(); // fecha o modal: ao voltar do WhatsApp a tela já está limpa
   }));
 }
 
@@ -208,8 +209,8 @@ function shell(inner, active) {
   const nav = (h, t, k, b) => `<a href="${h}" class="${active === k ? "on" : ""}">${t}${b ? `<span class="nbadge" id="${b}" hidden></span>` : ""}</a>`;
   $("#app").innerHTML = `<div class="shell"><aside class="side"><div class="brand">ProtoWeb</div><nav>
     ${adm ? nav("#/central", "Painel", "p") + nav("#/central/protocolos", "Protocolos", "l", "nb-prot") + nav("#/central/novo", "Novo protocolo", "n") + nav("#/central/setores", "Setores", "s") + nav("#/central/usuarios", "Usuários", "u") : ""}
-    ${nav("#/setores", adm ? "Ver como setor" : "Meus setores", "m", adm ? "" : "nb-set")}${nav("#/config", "Configurações", "c")}</nav></aside>
-    <div><header class="top"><span><span class="org">Prefeitura Municipal de Careiro</span>${sec ? `<span class="tag">Setor: ${esc(sec.name)}</span>` : ""}</span><span class="who">${esc(me.name)} (${esc(me.email)}) <button class="link" id="out">Sair</button></span></header>
+    ${adm ? "" : sectors.length > 1 ? sectors.map((s) => nav("#/setor/" + s.id, esc(s.name), "m" + s.id, "nb-s" + s.id)).join("") : nav("#/setores", "Caixa de entrada", "m", "nb-set")}${nav("#/config", "Configurações", "c")}</nav></aside>
+    <div><header class="top"><span><span class="org">Prefeitura Municipal de Careiro</span>${sec && !adm ? `<span class="tag">Setor: ${esc(sec.name)}</span>` : ""}</span><span class="who">${esc(me.name)} (${esc(me.email)}) <button class="link" id="out">Sair</button></span></header>
     <main>${inner}</main></div></div>`;
   $("#out").onclick = logout;
   paintBadge();
@@ -232,6 +233,7 @@ function paintBadge() {
   const set = (el, v) => { if (el) { el.hidden = !v; el.textContent = v > 99 ? "99+" : v || ""; } };
   set($("#nb-prot"), adm ? n : 0);
   set($("#nb-set"), adm ? 0 : n);
+  if (!adm) sectors.forEach((s) => set($("#nb-s" + s.id), sectorBadge[s.id] || 0));
   document.querySelectorAll(".card[data-id]").forEach((c) => set($(".cbadge", c), adm ? 0 : sectorBadge[c.dataset.id] || 0));
   document.title = (n ? `(${n}) ` : "") + "ProtoWeb · Prefeitura Municipal de Careiro";
   try { n ? navigator.setAppBadge?.(n) : navigator.clearAppBadge?.(); } catch { /* sem suporte */ }
@@ -301,9 +303,11 @@ async function logout() {
 const views = {
   async setores() {
     sectors = (await api("/api/me")).sectors;
-    shell(`<h1>Escolha o setor</h1>${sectors.length ? `<div class="cards">${sectors.map((s) => `<button class="card" data-id="${s.id}" data-name="${esc(s.name)}"><span class="cbadge" hidden></span><b>${esc(s.name)}</b><span class="muted">${esc(s.description || "")}</span></button>`).join("")}</div>` : `<div class="panel empty">Você ainda não tem acesso a nenhum setor. Peça à administração para liberar.</div>`}`, "m");
-    document.querySelectorAll(".card").forEach((c) => (c.onclick = () => { sessionStorage.setItem("sector", JSON.stringify({ id: c.dataset.id, name: c.dataset.name })); location.hash = "#/setor/" + c.dataset.id; }));
-    paintBadge();
+    if (me.role === "adm") return (location.hash = "#/central");
+    if (!sectors.length) return shell(`<h1>Caixa de entrada</h1><div class="panel empty">Você ainda não tem acesso a nenhum setor. Peça à administração para liberar.</div>`, "m");
+    // entra direto na caixa de entrada: último setor usado ou o primeiro da lista
+    const last = JSON.parse(sessionStorage.getItem("sector") || "null"), s = sectors.find((x) => x.id == last?.id) || sectors[0];
+    location.hash = "#/setor/" + s.id;
   },
   async config() {
     const perm = canNotify() ? Notification.permission : "unsupported", active = pref() === "on" && perm === "granted";
@@ -317,12 +321,19 @@ const views = {
     const tg = $("#tg");
     if (tg) tg.onclick = guard(async () => { tg.disabled = true; if (active) await disablePush(); else await enablePush(false); route(); });
   },
-  async setor(id) { await listView(id, `Caixa de entrada`, "m"); },
+  async setor(id) {
+    if (me.role === "adm") return (location.hash = "#/central");
+    const s = sectors.find((x) => x.id == id);
+    if (!s) return (location.hash = "#/setores");
+    sessionStorage.setItem("sector", JSON.stringify({ id: s.id, name: s.name }));
+    await listView(id, `Caixa de entrada`, secKey(s.id));
+  },
   async central() {
     const d = await api("/api/dashboard"), k = (n, l, c = "") => `<div class="kpi ${c}"><b>${n}</b><span>${l}</span></div>`;
+    const max = Math.max(1, ...d.porSetor.map((s) => s.total));
+    const bars = d.porSetor.length ? d.porSetor.map((s) => `<div class="bar-row"><span class="bar-name" title="${esc(s.name)}">${esc(s.name)}</span><div class="bar-track">${s.respondidos ? `<span class="seg ok" style="width:${(s.respondidos / max) * 100}%"></span>` : ""}${s.pendentes ? `<span class="seg pend" style="width:${(s.pendentes / max) * 100}%"></span>` : ""}</div><span class="bar-val"><b>${s.total}</b> <span class="muted">(${s.respondidos} resp. · ${s.pendentes} pend.)</span></span></div>`).join("") : `<p class="muted">Nenhum setor cadastrado.</p>`;
     shell(`<h1>Painel central</h1><div class="kpis">${k(d.total, "Protocolos")}${k(d.enviados, "Enviados")}${k(d.recebidos, "Recebidos")}${k(d.visualizados, "Visualizados")}${k(d.respondidos, "Respondidos")}${k(d.pendentes, "Pendentes de resposta", "pend")}</div>
-    <div class="two"><div class="panel"><h2>Enviados recentemente</h2>${d.recentes.length ? `<ul>${d.recentes.map((p) => `<li>${esc(p.protocol_number)} — ${esc(p.subject)} <span class="muted">(${p.setores} setor(es), ${fmt(p.created_at)})</span></li>`).join("")}</ul>` : `<p class="muted">Nenhum protocolo ainda.</p>`}</div>
-    <div class="panel"><h2>Últimas movimentações</h2>${d.movs.length ? `<ul>${d.movs.map((e) => `<li>${esc(e.protocol_number)}: ${esc(EVENT[e.event_type] || e.event_type)}${e.sector ? " · " + esc(e.sector) : ""}<br><small class="muted">${fmt(e.created_at)}</small></li>`).join("")}</ul>` : `<p class="muted">Sem movimentações.</p>`}</div></div>`, "p");
+    <div class="panel"><h2>Protocolos por setor</h2><div class="legend"><span><i class="seg ok"></i>Respondidos</span><span><i class="seg pend"></i>Pendentes</span></div>${bars}</div>`, "p");
   },
   async protocolos() { await listView(null, "Protocolos", "l"); },
   async novo() {
@@ -374,7 +385,7 @@ const views = {
     <div class="two"><div><div class="panel"><p><b>Destinatário:</b> ${esc(r.sector_name)} &nbsp; ${chip(r.status)}</p><p class="muted">Enviado ${fmt(r.sent_at)} · Recebido ${fmt(r.received_at)} · Visualizado ${fmt(r.first_viewed_at)} · Respondido ${fmt(r.responded_at)}</p><p style="white-space:pre-wrap">${esc(p.description)}</p>${fileList(orig)}${adm ? `<p><button class="btn sec sm" id="wa">Avisar por WhatsApp</button></p>` : ""}</div>
     <div class="panel"><h2>Comunicação</h2>${d.messages.map((m) => `<div class="msg ${m.role === "adm" ? "adm" : ""}"><small><b>${esc(m.author)}</b> · ${m.role === "adm" ? "Central" : esc(r.sector_name)} · ${fmt(m.created_at)}</small><div style="white-space:pre-wrap">${esc(m.message)}</div>${fileList(d.files.filter((f) => f.message_id === m.id))}</div>`).join("") || `<p class="muted">Nenhuma mensagem ainda.</p>`}
     <form id="rf"><div class="field"><label for="t">${adm ? "Enviar mensagem ao setor" : "Responder à central"}</label><textarea id="t" maxlength="5000"></textarea></div><div class="field"><input id="rfile" type="file" multiple accept="application/pdf,image/*" aria-label="Anexos"></div><button class="btn">${adm ? "Enviar mensagem" : "Enviar resposta"}</button></form></div></div>
-    <div class="panel"><h2>Histórico</h2><ul class="tl">${d.events.map((e) => `<li>${esc(EVENT[e.event_type] || e.event_type)}${e.author ? " · " + esc(e.author) : ""}<br><small class="muted">${fmt(e.created_at)}</small></li>`).join("")}</ul></div></div>`, adm ? "l" : "m");
+    <div class="panel"><h2>Histórico</h2><ul class="tl">${d.events.map((e) => `<li>${esc(EVENT[e.event_type] || e.event_type)}${e.author ? " · " + esc(e.author) : ""}<br><small class="muted">${fmt(e.created_at)}</small></li>`).join("")}</ul></div></div>`, adm ? "l" : secKey(r.sector_id));
     bindFiles($("main"));
     if ($("#wa")) $("#wa").onclick = guard(() => shareModal(p.id));
     poll(); // abrir o protocolo conclui o aviso: atualiza os contadores
@@ -395,13 +406,15 @@ async function listView(sid, title, active) {
     ${adm && !sid ? `<div><label for="sc">Setor destinatário</label><select id="sc"><option value="">Todos</option>${sectors.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("")}</select></div>` : ""}
     <div><label for="st">Status</label><select id="st"><option value="">Todos</option>${Object.entries(LABEL).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></div>
     <div><label for="fr">De</label><input id="fr" type="date"></div><div><label for="to">Até</label><input id="to" type="date"></div><button class="btn">Pesquisar</button></form><div id="res"></div>`, active);
-  const load = guard(async () => {
-    const q = new URLSearchParams({ q: $("#q").value, status: $("#st").value, from: $("#fr").value, to: $("#to").value });
+  const load = guard(async (page = 1) => {
+    const q = new URLSearchParams({ q: $("#q").value, status: $("#st").value, from: $("#fr").value, to: $("#to").value, page });
     const s = sid || ($("#sc") && $("#sc").value); if (s) q.set("sector_id", s);
-    const rows = await api("/api/protocols?" + q);
-    $("#res").innerHTML = `<div class="wrap"><table><tr><th>Número</th><th>Assunto</th><th>${adm ? "Destinatário" : "Origem"}</th><th>Enviado</th><th>Recebido</th><th>Visualização</th><th>Resposta</th><th></th></tr>${rows.map((r) => `<tr class="${newLabel(r) ? "new" : ""}"><td class="num">${esc(r.protocol_number)}${newLabel(r) ? `<br><span class="newb">${newLabel(r)}</span>` : ""}</td><td class="subj">${esc(r.subject)}</td><td>${adm ? esc(r.sector) : "Central"}</td><td>${two(r.sent_at)}</td><td>${two(r.received_at)}</td><td><div class="st">${r.first_viewed_at ? chip("visualizado") + `<span class="t">${fmt(r.first_viewed_at)}</span>` : `<span class="chip">Não visualizado</span>`}</div></td><td>${r.responded_at ? chip("respondido") : `<span class="chip">Sem resposta</span>`}</td><td class="nw"><a class="btn sec sm" style="text-decoration:none" href="#/p/${r.rid}">Abrir</a></td></tr>`).join("") || `<tr><td colspan="8" class="empty">Nenhum protocolo encontrado.</td></tr>`}</table></div>`;
+    const { rows, total, pages, page: cur } = await api("/api/protocols?" + q);
+    const pager = total > 50 ? `<div class="pager"><button class="btn sec sm" data-pg="${cur - 1}" ${cur <= 1 ? "disabled" : ""}>Anterior</button><span>Página ${cur} de ${pages} · ${total} protocolos</span><button class="btn sec sm" data-pg="${cur + 1}" ${cur >= pages ? "disabled" : ""}>Próxima</button></div>` : "";
+    $("#res").innerHTML = `<div class="wrap"><table><tr><th>Número</th><th>Assunto</th><th>${adm ? "Destinatário" : "Origem"}</th><th>Enviado</th><th>Recebido</th><th>Visualização</th><th>Resposta</th><th></th></tr>${rows.map((r) => `<tr class="${newLabel(r) ? "new" : ""}"><td class="num">${esc(r.protocol_number)}${newLabel(r) ? `<br><span class="newb">${newLabel(r)}</span>` : ""}</td><td class="subj">${esc(r.subject)}</td><td>${adm ? esc(r.sector) : "Central"}</td><td>${two(r.sent_at)}</td><td>${two(r.received_at)}</td><td><div class="st">${r.first_viewed_at ? chip("visualizado") + `<span class="t">${fmt(r.first_viewed_at)}</span>` : `<span class="chip">Não visualizado</span>`}</div></td><td>${r.responded_at ? chip("respondido") : `<span class="chip">Sem resposta</span>`}</td><td class="nw"><a class="btn sec sm" style="text-decoration:none" href="#/p/${r.rid}">Abrir</a></td></tr>`).join("") || `<tr><td colspan="8" class="empty">Nenhum protocolo encontrado.</td></tr>`}</table></div>${pager}`;
+    document.querySelectorAll("[data-pg]").forEach((b) => (b.onclick = () => { load(+b.dataset.pg); window.scrollTo({ top: 0 }); }));
   });
-  $("#ff").onsubmit = (e) => { e.preventDefault(); load(); };
+  $("#ff").onsubmit = (e) => { e.preventDefault(); load(1); };
   load();
 }
 
