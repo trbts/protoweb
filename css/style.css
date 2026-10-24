@@ -128,3 +128,10 @@ body.modal-open{overflow:hidden}
 .btn:hover{background-image:linear-gradient(90deg,#d41f62,#a8154f)}
 .btn.sec,.btn.sec:hover{background-image:none}
 .bar{background:linear-gradient(90deg,#e8286f,#f08ab4)}
+.side{background:linear-gradient(180deg,#f8c8dc 0%,#d3c1f2 100%);color:#4a1a52}
+.brand{color:#7a0f45}
+.side nav a{color:#5b2a63}
+.side nav a:hover{background:rgba(255,255,255,.55);color:#7a0f45}
+.side nav a.on{background:#fff;color:#7a0f45}
+.top{background:#bfe3f7;border-bottom-color:#a5d2ec}
+.top .who{color:#3d5565}
