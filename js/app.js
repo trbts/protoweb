@@ -52,28 +52,65 @@ function dialog(html, { ok = "Confirmar", onOk, big } = {}) {
 }
 const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
 
-// Lê arquivos: valida formato/tamanho, reduz imagens e converte para Base64.
+// Lê arquivos: valida o formato e, se passar de 1 MB, compacta antes de enviar (Base64 no D1).
+const LIMIT = MAX_MB * 1048576, TARGET = Math.floor(LIMIT * 0.95);
 async function readFiles(list) {
   const out = [];
   for (const f of list) {
     if (!["application/pdf", "image/jpeg", "image/png", "image/webp"].includes(f.type)) throw new Error(`"${f.name}": use PDF, JPG, PNG ou WebP`);
-    let blob = f;
-    if (f.type.startsWith("image/") && f.size > 300 * 1024) blob = await shrink(f);
-    if (blob.size > MAX_MB * 1048576) throw new Error(`"${f.name}" passa de ${MAX_MB} MB`);
-    out.push({ name: f.name, type: blob.type, data: await toB64(blob) });
+    let blob = f, name = f.name;
+    if (f.size > LIMIT) {
+      toast(`Compactando "${f.name}"...`);
+      blob = f.type === "application/pdf" ? await packPdf(f) : await packImage(f);
+      if (!blob) throw new Error(`Não foi possível reduzir "${f.name}" para menos de ${MAX_MB} MB sem perder muita qualidade. Divida o documento em partes.`);
+      if (blob.type === "image/jpeg" && f.type !== "image/jpeg") name = name.replace(/\.\w+$/, "") + ".jpg";
+      toast(`"${f.name}" compactado: ${(f.size / 1048576).toFixed(1)} MB para ${(blob.size / 1048576).toFixed(2)} MB`);
+    }
+    out.push({ name, type: blob.type, data: await toB64(blob) });
   }
   return out;
 }
-function shrink(file) {
-  return new Promise((res) => {
-    const img = new Image(), url = URL.createObjectURL(file);
-    img.onload = () => {
-      const k = Math.min(1, 1600 / Math.max(img.width, img.height)), c = document.createElement("canvas");
-      c.width = img.width * k; c.height = img.height * k; c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-      URL.revokeObjectURL(url); c.toBlob((b) => res(b && b.size < file.size ? b : file), "image/jpeg", 0.82);
-    };
-    img.onerror = () => res(file); img.src = url;
-  });
+// Imagem: mantém o tamanho original e baixa a qualidade aos poucos; só reduz as dimensões se for preciso.
+async function packImage(file) {
+  const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
+  const c = document.createElement("canvas"), g = c.getContext("2d");
+  for (const k of [1, 0.9, 0.8, 0.7, 0.6, 0.5]) {
+    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(bmp, 0, 0, c.width, c.height);
+    for (const q of [0.9, 0.82, 0.75, 0.68]) {
+      const b = await new Promise((r) => c.toBlob(r, "image/jpeg", q));
+      if (b && b.size <= TARGET) return b;
+    }
+  }
+  return null;
+}
+const loadScript = (src) => new Promise((ok, no) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = () => no(new Error("Não foi possível carregar a biblioteca de compactação")); document.head.append(s); });
+// PDF: 1) re-salva sem mexer no conteúdo (mantém o texto); 2) se ainda passar, refaz as páginas como imagens JPEG.
+async function packPdf(file) {
+  const CDN = "https://cdnjs.cloudflare.com/ajax/libs/";
+  if (!window.PDFLib) await loadScript(CDN + "pdf-lib/1.17.1/pdf-lib.min.js");
+  const buf = await file.arrayBuffer();
+  try {
+    const out = await (await PDFLib.PDFDocument.load(buf, { ignoreEncryption: true })).save({ useObjectStreams: true });
+    if (out.length <= TARGET) return new Blob([out], { type: "application/pdf" });
+  } catch { /* segue para a etapa 2 */ }
+  if (!window.pdfjsLib) { await loadScript(CDN + "pdf.js/3.11.174/pdf.min.js"); pdfjsLib.GlobalWorkerOptions.workerSrc = CDN + "pdf.js/3.11.174/pdf.worker.min.js"; }
+  const pdf = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
+  const c = document.createElement("canvas"), g = c.getContext("2d");
+  for (const [scale, q] of [[2.5, 0.8], [2, 0.75], [2, 0.62], [1.6, 0.62], [1.4, 0.55]]) {
+    const doc = await PDFLib.PDFDocument.create();
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i), vp = page.getViewport({ scale }), base = page.getViewport({ scale: 1 });
+      c.width = vp.width; c.height = vp.height; g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvasContext: g, viewport: vp }).promise;
+      const jpg = await new Promise((r) => c.toBlob(r, "image/jpeg", q));
+      const img = await doc.embedJpg(await jpg.arrayBuffer());
+      doc.addPage([base.width, base.height]).drawImage(img, { x: 0, y: 0, width: base.width, height: base.height });
+    }
+    const out = await doc.save();
+    if (out.length <= TARGET) { toast("Páginas do PDF convertidas em imagem para reduzir o tamanho (o texto deixa de ser selecionável)."); return new Blob([out], { type: "application/pdf" }); }
+  }
+  return null;
 }
 const toB64 = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(",")[1]); r.onerror = rej; r.readAsDataURL(blob); });
 
@@ -121,7 +158,7 @@ const views = {
     shell(`<h1>Novo protocolo</h1><form class="panel" id="f"><div class="field"><label for="s">Assunto</label><input id="s" required maxlength="200"></div>
     <div class="field"><label for="d">Conteúdo do documento</label><textarea id="d" maxlength="5000"></textarea></div>
     <div class="field"><label>Setores destinatários</label>${list.length ? `<div class="checks">${list.map((s) => `<label><input type="checkbox" name="sec" value="${s.id}"> ${esc(s.name)}</label>`).join("")}</div>` : `<p class="muted">Cadastre setores antes de enviar.</p>`}</div>
-    <div class="field"><label for="a">Anexos (PDF ou imagem, até ${MAX_MB} MB cada)</label><input id="a" type="file" multiple accept="application/pdf,image/*"></div>
+    <div class="field"><label for="a">Anexos (PDF ou imagem; arquivos acima de ${MAX_MB} MB são compactados automaticamente)</label><input id="a" type="file" multiple accept="application/pdf,image/*"></div>
     <p class="muted">Ao enviar, o protocolo entra na caixa de entrada de cada setor e o recebimento é registrado automaticamente. A visualização só é registrada quando alguém do setor abrir o protocolo.</p>
     <button class="btn">Enviar protocolo</button></form>`, "n");
     $("#f").onsubmit = (e) => {
