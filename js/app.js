@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getMessaging, getToken, onMessage, isSupported } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js";
+import { getMessaging, getToken, onMessage, deleteToken, isSupported } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 const firebaseConfig = {
@@ -15,7 +15,7 @@ const MAX_MB = 1;
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 // Chave pública do Firebase: Project settings > Cloud Messaging > Web Push certificates > Generate key pair.
-const VAPID_KEY = "BL6Gd6JAaUQXJF-I2Y4fczJATe3O87oao4LQbRB3uKb1vSxLTFjC4cbOhTTJLfiIDv_j5_2SmX4ODgblAbeGFFg";
+const VAPID_KEY = "COLE_AQUI_A_CHAVE_PUBLICA_VAPID";
 const swReady = "serviceWorker" in navigator ? navigator.serviceWorker.register("sw.js").then(() => navigator.serviceWorker.ready).catch(() => null) : Promise.resolve(null);
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -45,10 +45,10 @@ async function api(path, { method = "GET", body, blob, quiet } = {}) {
     return j;
   } finally { if (!quiet && !--busy) $("#bar").hidden = true; }
 }
-function dialog(html, { ok = "Confirmar", onOk, big } = {}) {
+function dialog(html, { ok = "Confirmar", cancel, onOk, big } = {}) {
   const m = document.createElement("div");
   m.className = "modal" + (big ? " big" : "");
-  m.innerHTML = `<div role="dialog">${html}<div class="acts"><button class="btn sec" data-x>${onOk ? "Cancelar" : "Fechar"}</button>${onOk ? `<button class="btn" data-ok>${ok}</button>` : ""}</div></div>`;
+  m.innerHTML = `<div role="dialog">${html}<div class="acts"><button class="btn sec" data-x>${cancel || (onOk ? "Cancelar" : "Fechar")}</button>${onOk ? `<button class="btn" data-ok>${ok}</button>` : ""}</div></div>`;
   document.body.append(m);
   const close = () => m.remove();
   m.addEventListener("click", (e) => { if (e.target === m || e.target.dataset.x !== undefined) close(); });
@@ -152,15 +152,14 @@ const bindFiles = (root) => root.querySelectorAll("[data-file]").forEach((b) => 
 // ---------- estrutura
 function shell(inner, active) {
   const adm = me.role === "adm", sec = JSON.parse(sessionStorage.getItem("sector") || "null");
-  const nav = (h, t, k) => `<a href="${h}" class="${active === k ? "on" : ""}">${t}</a>`;
+  const nav = (h, t, k, b) => `<a href="${h}" class="${active === k ? "on" : ""}">${t}${b ? `<span class="nbadge" id="${b}" hidden></span>` : ""}</a>`;
   $("#app").innerHTML = `<div class="shell"><aside class="side"><div class="brand">ProtoWeb</div><nav>
-    ${adm ? nav("#/central", "Painel", "p") + nav("#/central/protocolos", "Protocolos", "l") + nav("#/central/novo", "Novo protocolo", "n") + nav("#/central/setores", "Setores", "s") + nav("#/central/usuarios", "Usuários", "u") : ""}
-    ${nav("#/setores", adm ? "Ver como setor" : "Meus setores", "m")}</nav></aside>
-    <div><header class="top"><span><span class="org">Prefeitura Municipal de Careiro</span>${sec ? `<span class="tag">Setor: ${esc(sec.name)}</span>` : ""}<span id="nb"></span></span><span class="who"><button class="btn sec sm" id="pushbtn" hidden>Ativar notificações</button>${esc(me.name)} (${esc(me.email)}) <button class="link" id="out">Sair</button></span></header>
+    ${adm ? nav("#/central", "Painel", "p") + nav("#/central/protocolos", "Protocolos", "l", "nb-prot") + nav("#/central/novo", "Novo protocolo", "n") + nav("#/central/setores", "Setores", "s") + nav("#/central/usuarios", "Usuários", "u") : ""}
+    ${nav("#/setores", adm ? "Ver como setor" : "Meus setores", "m", adm ? "" : "nb-set")}${nav("#/config", "Configurações", "c")}</nav></aside>
+    <div><header class="top"><span><span class="org">Prefeitura Municipal de Careiro</span>${sec ? `<span class="tag">Setor: ${esc(sec.name)}</span>` : ""}</span><span class="who">${esc(me.name)} (${esc(me.email)}) <button class="link" id="out">Sair</button></span></header>
     <main>${inner}</main></div></div>`;
   $("#out").onclick = logout;
-  $("#pushbtn").onclick = () => enablePush(false);
-  paintBadge(); paintPushBtn();
+  paintBadge();
 }
 const loginView = () => {
   $("#app").innerHTML = `<div class="login"><div class="panel"><h1>ProtoWeb</h1><p class="org-l">Prefeitura Municipal de Careiro</p><p class="muted">Protocolos e documentos</p><button class="btn" id="g">Entrar com Google</button></div></div>`;
@@ -168,50 +167,77 @@ const loginView = () => {
 };
 
 // ---------- notificações
-// Nível 1 (app aberto): consulta a API a cada minuto, mostra o contador e avisa quando chega novidade.
-// Nível 2 (app fechado): push do Firebase Cloud Messaging, ativado por computador.
-let badge = null, timer = null, listening = false;
+// Contadores nos cards (consulta a cada minuto) e avisos do Windows/push, controlados em Configurações.
+let badge = null, sectorBadge = {}, timer = null, listening = false;
+const prefKey = () => "pw_notif_" + me.id;
+const pref = () => { try { return localStorage.getItem(prefKey()); } catch { return null; } };
+const setPref = (v) => { try { localStorage.setItem(prefKey(), v); } catch { /* sem armazenamento */ } };
+const canNotify = () => "Notification" in window;
+const newLabel = (r) => (me.role === "adm" ? (r.ru ? "Nova resposta" : "") : !r.first_viewed_at ? "Novo" : r.su ? "Nova mensagem" : "");
 function paintBadge() {
-  const n = badge || 0, el = $("#nb");
-  if (el) el.innerHTML = n ? `<span class="tag nb">${n} ${me.role === "adm" ? "resposta(s) nova(s)" : "novo(s)"}</span>` : "";
+  const n = badge || 0, adm = me.role === "adm";
+  const set = (el, v) => { if (el) { el.hidden = !v; el.textContent = v > 99 ? "99+" : v || ""; } };
+  set($("#nb-prot"), adm ? n : 0);
+  set($("#nb-set"), adm ? 0 : n);
+  document.querySelectorAll(".card[data-id]").forEach((c) => set($(".cbadge", c), adm ? 0 : sectorBadge[c.dataset.id] || 0));
   document.title = (n ? `(${n}) ` : "") + "ProtoWeb · Prefeitura Municipal de Careiro";
   try { n ? navigator.setAppBadge?.(n) : navigator.clearAppBadge?.(); } catch { /* sem suporte */ }
+  if (!n) swReady.then((r) => r?.getNotifications({ tag: "protoweb" }).then((l) => l.forEach((x) => x.close()))).catch(() => {});
 }
-function paintPushBtn() { const b = $("#pushbtn"); if (b) b.hidden = !("Notification" in window) || Notification.permission === "granted"; }
 async function showAlert(body) {
+  if (pref() !== "on") return;
   if (document.visibilityState === "visible") return toast(body);
-  if ("Notification" in window && Notification.permission === "granted") (await swReady)?.showNotification("ProtoWeb", { body, icon: "icon-192.png", tag: "protoweb" });
+  if (canNotify() && Notification.permission === "granted") (await swReady)?.showNotification("ProtoWeb", { body, icon: "icon-192.png", tag: "protoweb" });
 }
 async function poll() {
   try {
-    const { count } = await api("/api/notifications", { quiet: true });
-    const prev = badge; badge = count; paintBadge();
+    const { count, sectors } = await api("/api/notifications", { quiet: true });
+    const prev = badge; badge = count; sectorBadge = sectors || {}; paintBadge();
     if (prev !== null && count > prev) showAlert(me.role === "adm" ? "Nova resposta em um protocolo." : "Novo protocolo ou mensagem recebida.");
   } catch { /* tenta de novo no próximo ciclo */ }
 }
+async function pushToken() {
+  const reg = await swReady; if (!reg) throw new Error("Não foi possível iniciar o serviço de notificações.");
+  return getToken(getMessaging(app), { vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
+}
 async function enablePush(silent) {
   try {
-    if (!("Notification" in window) || !(await isSupported())) throw new Error("Este navegador não suporta notificações.");
+    if (!canNotify() || !(await isSupported())) throw new Error("Este navegador não suporta notificações.");
     if (VAPID_KEY.startsWith("COLE")) throw new Error("Notificações com o aplicativo fechado ainda não foram configuradas (chave VAPID).");
-    if ((await Notification.requestPermission()) !== "granted") throw new Error("Permita as notificações nas configurações do navegador.");
-    const reg = await swReady; if (!reg) throw new Error("Não foi possível iniciar o serviço de notificações.");
-    const msg = getMessaging(app), token = await getToken(msg, { vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
+    if ((await Notification.requestPermission()) !== "granted") throw new Error("O navegador está bloqueando as notificações deste site. Veja a orientação em Configurações.");
+    const token = await pushToken();
     await api("/api/push/register", { method: "POST", body: { token }, quiet: true });
-    if (!listening) { listening = true; onMessage(msg, (p) => { toast(p.notification?.body || "Nova notificação"); poll(); }); }
+    if (!listening) { listening = true; onMessage(getMessaging(app), (p) => { toast(p.notification?.body || "Nova notificação"); poll(); }); }
+    setPref("on");
     if (!silent) toast("Notificações ativadas neste computador");
-  } catch (e) { if (!silent) toast(e.message, true); }
-  paintPushBtn();
+    return true;
+  } catch (e) { if (!silent) toast(e.message, true); return false; }
+}
+async function disablePush() {
+  try {
+    if (canNotify() && Notification.permission === "granted" && !VAPID_KEY.startsWith("COLE")) {
+      const token = await pushToken();
+      await api("/api/push/unregister", { method: "POST", body: { token }, quiet: true });
+      await deleteToken(getMessaging(app));
+    }
+  } catch { /* segue: a preferência abaixo já silencia os avisos */ }
+  setPref("off"); toast("Notificações desativadas neste computador");
+}
+function askOnce() {
+  setPref("off"); // a pergunta aparece só nesta primeira vez; depois, só em Configurações
+  dialog(`<h2>Receber notificações?</h2><p>Quer ser avisado neste computador quando chegar um protocolo ou uma resposta, mesmo com o ProtoWeb fechado?</p><p class="muted">Você pode ativar ou desativar depois em Configurações.</p>`, { ok: "Ativar", cancel: "Agora não", onOk: async () => { await enablePush(false); } });
 }
 function startNotifications() {
-  clearInterval(timer); badge = null; poll(); timer = setInterval(poll, 60000);
-  if ("Notification" in window && Notification.permission === "granted") enablePush(true);
+  clearInterval(timer); badge = null; sectorBadge = {}; poll(); timer = setInterval(poll, 60000);
+  const p = pref();
+  if (p === "on" && canNotify() && Notification.permission === "granted") enablePush(true);
+  else if (p === null && canNotify() && Notification.permission !== "denied") askOnce();
 }
 async function logout() {
   clearInterval(timer);
-  try { // este computador deixa de receber avisos da conta que saiu
-    if ("Notification" in window && Notification.permission === "granted" && !VAPID_KEY.startsWith("COLE")) {
-      const token = await getToken(getMessaging(app), { vapidKey: VAPID_KEY, serviceWorkerRegistration: await swReady });
-      await api("/api/push/unregister", { method: "POST", body: { token }, quiet: true });
+  try { // este computador deixa de receber avisos da conta que saiu (volta a receber ao entrar de novo)
+    if (pref() === "on" && canNotify() && Notification.permission === "granted" && !VAPID_KEY.startsWith("COLE")) {
+      await api("/api/push/unregister", { method: "POST", body: { token: await pushToken() }, quiet: true });
     }
   } catch { /* segue com a saída */ }
   try { navigator.clearAppBadge?.(); } catch { /* sem suporte */ }
@@ -222,8 +248,20 @@ async function logout() {
 const views = {
   async setores() {
     sectors = (await api("/api/me")).sectors;
-    shell(`<h1>Escolha o setor</h1>${sectors.length ? `<div class="cards">${sectors.map((s) => `<button class="card" data-id="${s.id}" data-name="${esc(s.name)}"><b>${esc(s.name)}</b><span class="muted">${esc(s.description || "")}</span></button>`).join("")}</div>` : `<div class="panel empty">Você ainda não tem acesso a nenhum setor. Peça à administração para liberar.</div>`}`, "m");
+    shell(`<h1>Escolha o setor</h1>${sectors.length ? `<div class="cards">${sectors.map((s) => `<button class="card" data-id="${s.id}" data-name="${esc(s.name)}"><span class="cbadge" hidden></span><b>${esc(s.name)}</b><span class="muted">${esc(s.description || "")}</span></button>`).join("")}</div>` : `<div class="panel empty">Você ainda não tem acesso a nenhum setor. Peça à administração para liberar.</div>`}`, "m");
     document.querySelectorAll(".card").forEach((c) => (c.onclick = () => { sessionStorage.setItem("sector", JSON.stringify({ id: c.dataset.id, name: c.dataset.name })); location.hash = "#/setor/" + c.dataset.id; }));
+    paintBadge();
+  },
+  async config() {
+    const perm = canNotify() ? Notification.permission : "unsupported", active = pref() === "on" && perm === "granted";
+    const state = active ? "Ativadas" : perm === "denied" ? "Bloqueadas pelo navegador" : perm === "unsupported" ? "Não suportadas neste navegador" : "Desativadas";
+    shell(`<h1>Configurações</h1><div class="panel"><h2>Notificações neste computador</h2>
+      <p>Situação: <span class="chip ${active ? "respondido" : ""}">${state}</span></p>
+      <p class="muted">${me.role === "adm" ? "Você é avisado quando um setor responde a um protocolo." : "Você é avisado quando chega um protocolo ou uma mensagem da central para o seu setor."} O aviso chega mesmo com o ProtoWeb fechado, desde que o navegador esteja em execução. Vale só para este computador e este navegador. Os contadores nos cards continuam aparecendo.</p>
+      ${perm === "denied" ? `<p>O navegador está bloqueando as notificações deste site. Clique no ícone à esquerda do endereço, abra as permissões do site, mude Notificações para Permitir e recarregue a página.</p>` : ""}
+      ${perm === "unsupported" ? "" : `<button class="btn" id="tg">${active ? "Desativar notificações" : "Ativar notificações"}</button>`}</div>`, "c");
+    const tg = $("#tg");
+    if (tg) tg.onclick = guard(async () => { tg.disabled = true; if (active) await disablePush(); else await enablePush(false); route(); });
   },
   async setor(id) { await listView(id, `Caixa de entrada`, "m"); },
   async central() {
@@ -282,6 +320,7 @@ const views = {
     <form id="rf"><div class="field"><label for="t">${adm ? "Enviar mensagem ao setor" : "Responder à central"}</label><textarea id="t" maxlength="5000"></textarea></div><div class="field"><input id="rfile" type="file" multiple accept="application/pdf,image/*" aria-label="Anexos"></div><button class="btn">${adm ? "Enviar mensagem" : "Enviar resposta"}</button></form></div></div>
     <div class="panel"><h2>Histórico</h2><ul class="tl">${d.events.map((e) => `<li>${esc(EVENT[e.event_type] || e.event_type)}${e.author ? " · " + esc(e.author) : ""}<br><small class="muted">${fmt(e.created_at)}</small></li>`).join("")}</ul></div></div>`, adm ? "l" : "m");
     bindFiles($("main"));
+    poll(); // abrir o protocolo conclui o aviso: atualiza os contadores
     watchFiles($("#rfile"));
     $("#rf").onsubmit = guard(async (e) => {
       e.preventDefault();
@@ -303,7 +342,7 @@ async function listView(sid, title, active) {
     const q = new URLSearchParams({ q: $("#q").value, status: $("#st").value, from: $("#fr").value, to: $("#to").value });
     const s = sid || ($("#sc") && $("#sc").value); if (s) q.set("sector_id", s);
     const rows = await api("/api/protocols?" + q);
-    $("#res").innerHTML = `<div class="wrap"><table><tr><th>Número</th><th>Assunto</th><th>${adm ? "Destinatário" : "Origem"}</th><th>Enviado</th><th>Recebido</th><th>Visualização</th><th>Resposta</th><th></th></tr>${rows.map((r) => `<tr><td class="num">${esc(r.protocol_number)}</td><td class="subj">${esc(r.subject)}</td><td>${adm ? esc(r.sector) : "Central"}</td><td>${two(r.sent_at)}</td><td>${two(r.received_at)}</td><td><div class="st">${r.first_viewed_at ? chip("visualizado") + `<span class="t">${fmt(r.first_viewed_at)}</span>` : `<span class="chip">Não visualizado</span>`}</div></td><td>${r.responded_at ? chip("respondido") : `<span class="chip">Sem resposta</span>`}</td><td class="nw"><a class="btn sec sm" style="text-decoration:none" href="#/p/${r.rid}">Abrir</a></td></tr>`).join("") || `<tr><td colspan="8" class="empty">Nenhum protocolo encontrado.</td></tr>`}</table></div>`;
+    $("#res").innerHTML = `<div class="wrap"><table><tr><th>Número</th><th>Assunto</th><th>${adm ? "Destinatário" : "Origem"}</th><th>Enviado</th><th>Recebido</th><th>Visualização</th><th>Resposta</th><th></th></tr>${rows.map((r) => `<tr class="${newLabel(r) ? "new" : ""}"><td class="num">${esc(r.protocol_number)}${newLabel(r) ? `<br><span class="newb">${newLabel(r)}</span>` : ""}</td><td class="subj">${esc(r.subject)}</td><td>${adm ? esc(r.sector) : "Central"}</td><td>${two(r.sent_at)}</td><td>${two(r.received_at)}</td><td><div class="st">${r.first_viewed_at ? chip("visualizado") + `<span class="t">${fmt(r.first_viewed_at)}</span>` : `<span class="chip">Não visualizado</span>`}</div></td><td>${r.responded_at ? chip("respondido") : `<span class="chip">Sem resposta</span>`}</td><td class="nw"><a class="btn sec sm" style="text-decoration:none" href="#/p/${r.rid}">Abrir</a></td></tr>`).join("") || `<tr><td colspan="8" class="empty">Nenhum protocolo encontrado.</td></tr>`}</table></div>`;
   });
   $("#ff").onsubmit = (e) => { e.preventDefault(); load(); };
   load();
