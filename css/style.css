@@ -1,4 +1,4 @@
-:root{--pri:#d6246e;--pri-d:#a8154f;--deep:#a8154f;--deep-h:rgba(255,255,255,.16);--tint:#fde8f1;--bg:#fbf5f8;--line:#efdde6;--ink:#1f1a2b;--mute:#625b72;--ok:#1d7a4a;--warn:#9a6200;--err:#b3261e;--r:8px}
+:root{--pri:#FFC6FF;--pri-d:#a8154f;--deep:#a8154f;--deep-h:rgba(255,255,255,.16);--tint:#fde8f1;--bg:#fbf5f8;--line:#efdde6;--ink:#1f1a2b;--mute:#625b72;--ok:#1d7a4a;--warn:#9a6200;--err:#b3261e;--r:8px}
 *{box-sizing:border-box}
 body{margin:0;font:15px/1.5 "IBM Plex Sans",system-ui,sans-serif;color:var(--ink);background:var(--bg)}
 a{color:var(--pri)}
