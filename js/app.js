@@ -59,6 +59,8 @@ function dialog(html, { ok = "Confirmar", cancel, onOk, big, required } = {}) {
 }
 // Com um modal aberto, o fundo fica bloqueado (cliques, foco e rolagem).
 new MutationObserver(() => { const open = !!document.querySelector(".modal"), app = $("#app"); if (app) app.inert = open; document.body.classList.toggle("modal-open", open); }).observe(document.body, { childList: true });
+document.addEventListener("click", (e) => { const m = $("#umenu"); if (m && !m.hidden && !m.contains(e.target)) { m.hidden = true; $("#um")?.setAttribute("aria-expanded", "false"); } });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { const m = $("#umenu"); if (m) m.hidden = true; } });
 const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
 
 // Lê arquivos: valida o formato e, se passar de 1 MB, compacta antes de enviar (Base64 no D1).
@@ -215,8 +217,11 @@ const ICON = {
   n: svg('<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>'),
   s: svg('<path d="M4 21V7l8-4 8 4v14"/><path d="M9 21v-6h6v6M9 10h.01M15 10h.01"/>'),
   u: svg('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.2a6.5 6.5 0 0 1 3.5 5.8"/>'),
+  back: svg('<path d="M19 12H5M12 19l-7-7 7-7"/>'),
+  out: svg('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>'),
   user: '<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="#5d5a66"/><circle cx="12" cy="9.5" r="4" fill="#e9e6f0"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0a12 12 0 0 1-15 0z" fill="#e9e6f0"/></svg>',
 };
+const avatar = (px) => { const u = auth.currentUser?.photoURL; return u ? `<img class="avatar" style="width:${px}px;height:${px}px" src="${esc(u)}" referrerpolicy="no-referrer" alt="">` : `<span class="avatar" style="width:${px}px;height:${px}px">${ICON.user}</span>`; };
 function shell(inner, active) {
   const adm = me.role === "adm", sec = JSON.parse(sessionStorage.getItem("sector") || "null");
   const tag = sec && !adm ? `<span class="tag">Setor: ${esc(sec.name)}</span>` : "";
@@ -229,12 +234,16 @@ function shell(inner, active) {
     window.scrollTo(0, 0); paintBadge(); return;
   }
   const nav = (h, t, k, b) => `<a href="${h}" data-k="${k}" class="${active === k ? "on" : ""}"><span class="ni">${ICON[k] || ICON.m}</span><span class="nt">${t}</span>${b ? `<span class="nbadge" id="${b}" hidden></span>` : ""}</a>`;
-  $("#app").innerHTML = `<div class="shell" data-sig="${sig}"><header class="top"><span class="brandbar"><img class="logo" src="logo.svg" alt="Brasão de Careiro"><span class="org">Prefeitura Municipal de Careiro</span><span class="tagwrap">${tag}</span></span><span class="who" title="${esc(me.name)} (${esc(me.email)})"><span class="avatar">${ICON.user}</span><b>${esc(String(me.name || me.email).split(" ")[0])}</b><button class="link" id="out">Sair</button></span></header>
+  $("#app").innerHTML = `<div class="shell" data-sig="${sig}"><header class="top"><span class="brandbar"><img class="logo" src="logo.svg" alt="Brasão de Careiro"><span class="org">Prefeitura Municipal de Careiro</span><span class="tagwrap">${tag}</span></span><span class="who"><button class="uchip" id="um" aria-haspopup="true" aria-expanded="false" title="${esc(me.name)} (${esc(me.email)})">${avatar(34)}<b>${esc(String(me.name || me.email).split(" ")[0])}</b></button>
+      <div class="umenu" id="umenu" hidden><div class="uinfo">${avatar(64)}<b>${esc(me.name)}</b><span class="muted">${esc(me.email)}</span></div><button class="btn sec" id="out">${ICON.out}<span>Sair</span></button></div></span></header>
     <div class="body"><aside class="side"><nav>
     ${adm ? nav("#/central", "Painel", "p") + nav("#/central/protocolos", "Protocolos", "l", "nb-prot") + nav("#/central/novo", "Novo protocolo", "n") + nav("#/central/setores", "Setores", "s") + nav("#/central/usuarios", "Usuários", "u") : ""}
     ${adm ? "" : sectors.length > 1 ? sectors.map((x) => nav("#/setor/" + x.id, esc(x.name), "m" + x.id, "nb-s" + x.id)).join("") : nav("#/setores", "Caixa de entrada", "m", "nb-set")}${nav("#/config", "Configurações", "c")}</nav></aside>
     <main class="fade">${inner}</main></div></div>`;
   $("#out").onclick = logout;
+  const um = $("#um"), menu = $("#umenu");
+  um.onclick = (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; um.setAttribute("aria-expanded", String(!menu.hidden)); };
+  document.querySelectorAll("img.avatar").forEach((i) => (i.onerror = () => i.replaceWith(Object.assign(document.createElement("span"), { className: "avatar", innerHTML: ICON.user }))));
   paintBadge();
 }
 const loginView = () => {
@@ -334,11 +343,11 @@ const views = {
   async config() {
     const perm = canNotify() ? Notification.permission : "unsupported", active = pref() === "on" && perm === "granted";
     const state = active ? "Ativadas" : perm === "denied" ? "Bloqueadas pelo navegador" : perm === "unsupported" ? "Não suportadas neste navegador" : "Desativadas";
-    shell(`<h1>Configurações</h1><div class="panel" style="max-width:560px"><h2>Meus dados</h2>${profileFields()}<button class="btn" id="sv">Salvar dados</button></div><div class="panel"><h2>Notificações neste computador</h2>
+    shell(`<h1>Configurações</h1><div class="cfg"><div class="panel"><h2>Meus dados</h2>${profileFields()}<button class="btn" id="sv">Salvar dados</button></div><div class="panel"><h2>Notificações neste computador</h2>
       <p>Situação: <span class="chip ${active ? "respondido" : ""}">${state}</span></p>
       <p class="muted">${me.role === "adm" ? "Você é avisado quando um setor responde a um protocolo." : "Você é avisado quando chega um protocolo ou uma mensagem da central para o seu setor."} O aviso chega mesmo com o ProtoWeb fechado, desde que o navegador esteja em execução. Vale só para este computador e este navegador. Os contadores nos cards continuam aparecendo.</p>
       ${perm === "denied" ? `<p>O navegador está bloqueando as notificações deste site. Clique no ícone à esquerda do endereço, abra as permissões do site, mude Notificações para Permitir e recarregue a página.</p>` : ""}
-      ${perm === "unsupported" ? "" : `<button class="btn" id="tg">${active ? "Desativar notificações" : "Ativar notificações"}</button>`}</div>`, "c");
+      ${perm === "unsupported" ? "" : `<button class="btn" id="tg">${active ? "Desativar notificações" : "Ativar notificações"}</button>`}</div></div>`, "c");
     maskPhone($("#pp")); $("#sv").onclick = guard(async () => { await saveProfile(); toast("Dados salvos"); route(); });
     const tg = $("#tg");
     if (tg) tg.onclick = guard(async () => { tg.disabled = true; if (active) await disablePush(); else await enablePush(false); route(); });
@@ -403,7 +412,7 @@ const views = {
     const orig = d.files.filter((f) => !f.message_id);
     const back = adm ? "#/central/protocolos" : "#/setor/" + r.sector_id;
     if (!adm) sessionStorage.setItem("sector", JSON.stringify({ id: r.sector_id, name: r.sector_name }));
-    shell(`<p><a href="${back}">Voltar à lista</a></p><h1>${esc(p.protocol_number)} — ${esc(p.subject)}</h1>
+    shell(`<p><a class="backbtn" href="${back}" title="Voltar à lista" aria-label="Voltar à lista">${ICON.back}</a></p><h1>${esc(p.protocol_number)} — ${esc(p.subject)}</h1>
     <div class="two"><div><div class="panel"><p><b>Destinatário:</b> ${esc(r.sector_name)} &nbsp; ${chip(r.status)}</p><p class="muted">Enviado ${fmt(r.sent_at)} · Recebido ${fmt(r.received_at)} · Visualizado ${fmt(r.first_viewed_at)} · Respondido ${fmt(r.responded_at)}</p><p style="white-space:pre-wrap">${esc(p.description)}</p>${fileList(orig)}${adm ? `<p><button class="btn sec sm" id="wa">Avisar por WhatsApp</button></p>` : ""}</div>
     <div class="panel"><h2>Comunicação</h2>${d.messages.map((m) => `<div class="msg ${m.role === "adm" ? "adm" : ""}"><small><b>${esc(m.author)}</b> · ${m.role === "adm" ? "Central" : esc(r.sector_name)} · ${fmt(m.created_at)}</small><div style="white-space:pre-wrap">${esc(m.message)}</div>${fileList(d.files.filter((f) => f.message_id === m.id))}</div>`).join("") || `<p class="muted">Nenhuma mensagem ainda.</p>`}
     <form id="rf"><div class="field"><label for="t">${adm ? "Enviar mensagem ao setor" : "Responder à central"}</label><textarea id="t" maxlength="5000"></textarea></div><div class="field"><input id="rfile" type="file" multiple accept="application/pdf,image/*" aria-label="Anexos"></div><button class="btn">${adm ? "Enviar mensagem" : "Enviar resposta"}</button></form></div></div>
