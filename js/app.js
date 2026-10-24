@@ -182,22 +182,22 @@ function profileModal() { // aparece no login do usuário de setor até o cadast
   } });
   maskPhone($("#pp", m));
 }
-// Depois do envio, a central abre o WhatsApp de cada usuário do setor com a mensagem pronta e o link direto do documento.
+// Depois do envio, a central abre o WhatsApp de cada usuário do setor com a mensagem pronta e o link do painel.
+// O link só abre o protocolo para quem estiver conectado com uma conta com acesso ao setor.
 async function shareModal(pid) {
-  const d = await api(`/api/protocols/${pid}/share`);
-  const links = d.files.length ? "\n\nDocumento(s):\n" + d.files.map((f) => `${f.name}: ${f.url}`).join("\n") + `\n(Os links valem por ${d.days} dias.)` : "";
-  const tpl = "Olá, {nome}! A Prefeitura Municipal de Careiro encaminhou o protocolo {protocolo} ao setor {setor}.{links}\n\nAcompanhe também pelo ProtoWeb.";
+  const d = await api(`/api/protocols/${pid}/share`), base = location.origin + location.pathname;
+  const tpl = "Olá, {nome}! A Prefeitura Municipal de Careiro encaminhou o protocolo {protocolo} ao setor {setor}.\n\nPara ver o documento, acesse o ProtoWeb: {link}\n(É preciso entrar com a sua conta Google.)";
   const contacts = [];
   const rows = d.sectors.map((sc) => `<h2 style="margin-top:14px;font-size:15px">${esc(sc.sector)}</h2>` + (sc.users.length ? sc.users.map((u) => {
     if (!u.phone) return `<div class="ct"><span>${esc(u.name)}</span><span class="muted">sem número cadastrado</span></div>`;
-    contacts.push({ u, sector: sc.sector });
+    contacts.push({ u, sector: sc.sector, rid: sc.rid });
     return `<div class="ct"><span>${esc(u.name)} <span class="muted">${esc(fmtPhone(u.phone))}</span></span><button class="btn sm" data-c="${contacts.length - 1}">Enviar no WhatsApp</button></div>`;
   }).join("") : `<p class="muted">Nenhum usuário vinculado a este setor.</p>`)).join("");
   const m = dialog(`<h2>Avisar por WhatsApp</h2><p class="muted">Protocolo ${esc(d.protocol_number)} enviado. Cada botão abre o WhatsApp com a mensagem pronta.</p>
-    <div class="field"><label for="wt">Mensagem</label><textarea id="wt">${esc(tpl)}</textarea><div class="note">Use {nome}, {setor}, {protocolo} e {links}: cada pessoa recebe a mensagem com os próprios dados. Os links abrem o documento direto e valem por ${d.days} dias; quem tiver o link consegue abrir o arquivo.</div></div>${rows}`, {});
+    <div class="field"><label for="wt">Mensagem</label><textarea id="wt">${esc(tpl)}</textarea><div class="note">Use {nome}, {setor}, {protocolo} e {link}: cada pessoa recebe a mensagem com os próprios dados. O link abre o protocolo no ProtoWeb: entra quem estiver conectado com uma conta que tenha acesso ao setor; os outros não conseguem ver o documento.</div></div>${rows}`, {});
   m.querySelectorAll("[data-c]").forEach((b) => (b.onclick = () => {
-    const { u, sector } = contacts[b.dataset.c];
-    const msg = $("#wt", m).value.replace(/\{nome\}/g, () => u.name || "").replace(/\{setor\}/g, () => sector).replace(/\{protocolo\}/g, () => d.protocol_number).replace(/\{links\}/g, () => links);
+    const { u, sector, rid } = contacts[b.dataset.c];
+    const msg = $("#wt", m).value.replace(/\{nome\}/g, () => u.name || "").replace(/\{setor\}/g, () => sector).replace(/\{protocolo\}/g, () => d.protocol_number).replace(/\{link\}/g, () => `${base}#/p/${rid}`);
     window.open(`https://wa.me/${u.phone}?text=${encodeURIComponent(msg)}`, "_blank", "noopener");
   }));
 }
@@ -369,6 +369,7 @@ const views = {
     const d = await api("/api/recipients/" + rid), { protocol: p, recipient: r } = d, adm = me.role === "adm";
     const orig = d.files.filter((f) => !f.message_id);
     const back = adm ? "#/central/protocolos" : "#/setor/" + r.sector_id;
+    if (!adm) sessionStorage.setItem("sector", JSON.stringify({ id: r.sector_id, name: r.sector_name }));
     shell(`<p><a href="${back}">Voltar à lista</a></p><h1>${esc(p.protocol_number)} — ${esc(p.subject)}</h1>
     <div class="two"><div><div class="panel"><p><b>Destinatário:</b> ${esc(r.sector_name)} &nbsp; ${chip(r.status)}</p><p class="muted">Enviado ${fmt(r.sent_at)} · Recebido ${fmt(r.received_at)} · Visualizado ${fmt(r.first_viewed_at)} · Respondido ${fmt(r.responded_at)}</p><p style="white-space:pre-wrap">${esc(p.description)}</p>${fileList(orig)}${adm ? `<p><button class="btn sec sm" id="wa">Avisar por WhatsApp</button></p>` : ""}</div>
     <div class="panel"><h2>Comunicação</h2>${d.messages.map((m) => `<div class="msg ${m.role === "adm" ? "adm" : ""}"><small><b>${esc(m.author)}</b> · ${m.role === "adm" ? "Central" : esc(r.sector_name)} · ${fmt(m.created_at)}</small><div style="white-space:pre-wrap">${esc(m.message)}</div>${fileList(d.files.filter((f) => f.message_id === m.id))}</div>`).join("") || `<p class="muted">Nenhuma mensagem ainda.</p>`}
@@ -416,7 +417,10 @@ async function route() {
     }
     if (!views[h[0]] || h[0].startsWith("central-")) return (location.hash = "#/setores");
     await views[h[0]](h[1]);
-  } catch (e) { toast(e.message, true); if (!$("#app").innerHTML) $("#app").innerHTML = ""; }
+  } catch (e) {
+    toast(e.message, true);
+    if (h[0] === "p" || !$("#app").querySelector(".shell")) location.hash = me.role === "adm" ? "#/central" : "#/setores";
+  }
 }
 // "protocolos" e "novo" ficam em #/central/...; mapeia para as telas acima
 views["central-protocolos"] = views.protocolos; views["central-novo"] = views.novo;
