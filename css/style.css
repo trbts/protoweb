@@ -101,3 +101,6 @@ textarea{min-height:110px;resize:vertical}
 .newb{display:inline-block;margin-top:4px;padding:0 9px;border-radius:99px;background:#d0343c;color:#fff;font-size:12px;font-weight:600}
 tr.new td{background:#fcf8ff}
 tr.new td:first-child{box-shadow:inset 4px 0 0 #d0343c}
+.note{margin-top:6px;padding:8px 12px;border-left:3px solid var(--pri);background:var(--tint);border-radius:4px;font-size:14px;color:var(--deep)}
+.ct{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}
+.ct:last-child{border-bottom:0}
