@@ -197,3 +197,19 @@ select{appearance:none;-webkit-appearance:none;padding-right:34px;background:#ff
 .modal>div{border-radius:16px;box-shadow:0 20px 60px rgba(40,20,90,.35)}
 .bar-track{background:#eee9f6}
 @media(max-width:900px){.side nav a .ni{margin-right:8px}}
+
+.top .who{position:relative}
+.uchip{display:flex;align-items:center;gap:10px;background:transparent;border:0;font:inherit;color:#1f1a2b;cursor:pointer;padding:4px 10px 4px 4px;border-radius:99px;transition:background-color .2s}
+.uchip:hover,.uchip[aria-expanded=true]{background:rgba(255,255,255,.55)}
+.avatar{display:inline-flex;border-radius:50%;overflow:hidden;line-height:0;object-fit:cover;flex-shrink:0}
+.avatar svg{width:100%;height:100%}
+.umenu{position:absolute;right:0;top:calc(100% + 10px);width:300px;background:#fff;border-radius:18px;box-shadow:0 10px 40px rgba(40,20,90,.28);padding:22px 20px 18px;z-index:30;text-align:center;animation:pgIn .18s ease both}
+.umenu[hidden]{display:none}
+.uinfo{display:flex;flex-direction:column;align-items:center;gap:4px;margin-bottom:16px;word-break:break-all}
+.uinfo b{font-size:16px;margin-top:8px;color:#1f1a2b}
+.umenu .btn{gap:8px;width:100%}
+.backbtn{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:50%;background:#fff;color:#1f1a2b;box-shadow:0 2px 8px rgba(60,40,120,.18);transition:transform .15s,background-color .15s}
+.backbtn:hover{background:#faf8ff;transform:translateX(-2px)}
+.cfg{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;align-items:start}
+.cfg .panel{margin-bottom:0}
+@media(max-width:900px){.cfg{grid-template-columns:1fr}.umenu{right:-8px}}
