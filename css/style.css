@@ -100,7 +100,7 @@ textarea{min-height:110px;resize:vertical}
 .nbadge[hidden],.cbadge[hidden]{display:none}
 .newb{display:inline-block;margin-top:4px;padding:0 9px;border-radius:99px;background:#d0343c;color:#fff;font-size:12px;font-weight:600}
 tr.new td{background:#fcf8ff}
-tr.new td:first-child{box-shadow:inset 4px 0 0 #d0343c}
+tr.new td:first-child{box-shadow:inset 4px 0 0 #b79ce3}
 .note{margin-top:6px;padding:8px 12px;border-left:3px solid var(--pri);background:var(--tint);border-radius:4px;font-size:14px;color:var(--deep)}
 .ct{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}
 .ct:last-child{border-bottom:0}
@@ -119,3 +119,7 @@ tr.new td:first-child{box-shadow:inset 4px 0 0 #d0343c}
 .ct{align-items:flex-start}
 .ct .btn{flex-shrink:0}
 @media(max-width:700px){.bar-row{grid-template-columns:1fr}}
+.brandbar{display:flex;align-items:center;gap:12px;min-width:0}
+.logo{height:42px;width:auto;flex-shrink:0}
+body.modal-open{overflow:hidden}
+.modal{overscroll-behavior:contain}
