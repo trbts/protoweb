@@ -144,3 +144,5 @@ body.modal-open{overflow:hidden}
 .top .org,.top .who{color:#fff}
 .top .who .link{color:#fff}
 @media(max-width:900px){.brand{margin:0 8px 0 0;padding:0 14px;height:40px;border-radius:var(--r)}}
+.brand{background:#9370DB}
+.top{background:#9370DB;border-bottom-color:#9370DB}
