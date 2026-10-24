@@ -18,6 +18,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const fmt = (d) => (d ? new Date(d).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "—");
 const LABEL = { enviado: "Enviado", recebido: "Recebido", visualizado: "Visualizado", respondido: "Respondido" };
 const EVENT = { criado: "Protocolo criado", enviado: "Enviado pela central", recebido: "Recebimento registrado na caixa de entrada", visualizado: "Primeira visualização", resposta: "Resposta do setor", mensagem_central: "Mensagem da central", anexo: "Documento anexado" };
+const two = (d) => (d ? `<span class="d">${new Date(d).toLocaleDateString("pt-BR")}</span><span class="t">${new Date(d).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>` : "—");
 const chip = (s) => `<span class="chip ${s}">${LABEL[s] || s}</span>`;
 
 let me = null, sectors = [], busy = 0;
@@ -112,6 +113,27 @@ async function packPdf(file) {
   }
   return null;
 }
+// Compacta assim que os arquivos são escolhidos e guarda o resultado no próprio campo.
+function watchFiles(input) {
+  const info = document.createElement("div"); info.className = "muted"; input.after(info);
+  input._files = []; input._n = 0; input._job = Promise.resolve();
+  input.addEventListener("change", () => {
+    const id = ++input._n, picked = [...input.files];
+    input._files = []; info.textContent = picked.length ? "Preparando arquivos..." : "";
+    input._job = (async () => {
+      try {
+        const files = await readFiles(picked);
+        if (id !== input._n) return;
+        input._files = files;
+        info.textContent = "Pronto para enviar: " + files.map((f) => `${f.name} (${Math.ceil((f.data.length * 0.75) / 1024)} KB)`).join(", ");
+      } catch (e) {
+        if (id !== input._n) return;
+        input.value = ""; input._files = []; info.textContent = ""; toast(e.message, true);
+      }
+    })();
+  });
+}
+const getFiles = async (input) => { await input._job; return input._files; };
 const toB64 = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(",")[1]); r.onerror = rej; r.readAsDataURL(blob); });
 
 async function openFile(id, name, type) {
@@ -129,12 +151,12 @@ function shell(inner, active) {
   $("#app").innerHTML = `<div class="shell"><aside class="side"><div class="brand">ProtoWeb</div><nav>
     ${adm ? nav("#/central", "Painel", "p") + nav("#/central/protocolos", "Protocolos", "l") + nav("#/central/novo", "Novo protocolo", "n") + nav("#/central/setores", "Setores", "s") + nav("#/central/usuarios", "Usuários", "u") : ""}
     ${nav("#/setores", adm ? "Ver como setor" : "Meus setores", "m")}</nav></aside>
-    <div><header class="top"><span>${sec ? "Setor: <b>" + esc(sec.name) + "</b>" : "Prefeitura Municipal"}</span><span class="who">${esc(me.name)} (${esc(me.email)}) <button class="link" id="out">Sair</button></span></header>
+    <div><header class="top"><span><span class="org">Prefeitura Municipal de Careiro</span>${sec ? `<span class="tag">Setor: ${esc(sec.name)}</span>` : ""}</span><span class="who">${esc(me.name)} (${esc(me.email)}) <button class="link" id="out">Sair</button></span></header>
     <main>${inner}</main></div></div>`;
   $("#out").onclick = () => signOut(auth);
 }
 const loginView = () => {
-  $("#app").innerHTML = `<div class="login"><div class="panel"><h1>ProtoWeb</h1><p class="muted">Protocolos e documentos da prefeitura</p><button class="btn" id="g">Entrar com Google</button></div></div>`;
+  $("#app").innerHTML = `<div class="login"><div class="panel"><h1>ProtoWeb</h1><p class="org-l">Prefeitura Municipal de Careiro</p><p class="muted">Protocolos e documentos</p><button class="btn" id="g">Entrar com Google</button></div></div>`;
   $("#g").onclick = () => signInWithPopup(auth, new GoogleAuthProvider()).catch((e) => toast("Não foi possível entrar: " + e.code, true));
 };
 
@@ -161,12 +183,13 @@ const views = {
     <div class="field"><label for="a">Anexos (PDF ou imagem; arquivos acima de ${MAX_MB} MB são compactados automaticamente)</label><input id="a" type="file" multiple accept="application/pdf,image/*"></div>
     <p class="muted">Ao enviar, o protocolo entra na caixa de entrada de cada setor e o recebimento é registrado automaticamente. A visualização só é registrada quando alguém do setor abrir o protocolo.</p>
     <button class="btn">Enviar protocolo</button></form>`, "n");
+    watchFiles($("#a"));
     $("#f").onsubmit = (e) => {
       e.preventDefault();
       const ids = [...document.querySelectorAll("[name=sec]:checked")].map((c) => +c.value);
       if (!ids.length) return toast("Selecione ao menos um setor", true);
       dialog(`<h2>Confirmar envio</h2><p>Enviar o protocolo para ${ids.length} setor(es)? Essa ação não pode ser desfeita.</p>`, { ok: "Enviar", onOk: async () => {
-        const files = await readFiles($("#a").files);
+        const files = await getFiles($("#a"));
         const r = await api("/api/protocols", { method: "POST", body: { subject: $("#s").value, description: $("#d").value, sector_ids: ids, files } });
         toast("Protocolo enviado: " + r.protocol_number); location.hash = "#/central/protocolos";
       } });
@@ -201,9 +224,10 @@ const views = {
     <form id="rf"><div class="field"><label for="t">${adm ? "Enviar mensagem ao setor" : "Responder à central"}</label><textarea id="t" maxlength="5000"></textarea></div><div class="field"><input id="rfile" type="file" multiple accept="application/pdf,image/*" aria-label="Anexos"></div><button class="btn">${adm ? "Enviar mensagem" : "Enviar resposta"}</button></form></div></div>
     <div class="panel"><h2>Histórico</h2><ul class="tl">${d.events.map((e) => `<li>${esc(EVENT[e.event_type] || e.event_type)}${e.author ? " · " + esc(e.author) : ""}<br><small class="muted">${fmt(e.created_at)}</small></li>`).join("")}</ul></div></div>`, adm ? "l" : "m");
     bindFiles($("main"));
+    watchFiles($("#rfile"));
     $("#rf").onsubmit = guard(async (e) => {
       e.preventDefault();
-      const files = await readFiles($("#rfile").files);
+      const files = await getFiles($("#rfile"));
       await api(`/api/recipients/${rid}/messages`, { method: "POST", body: { message: $("#t").value, files } });
       toast(adm ? "Mensagem enviada" : "Resposta enviada"); route();
     });
@@ -213,7 +237,7 @@ const views = {
 async function listView(sid, title, active) {
   const adm = me.role === "adm";
   if (adm && !sectors.length) sectors = (await api("/api/sectors")).filter((s) => s.active);
-  shell(`<h1>${title}</h1><form class="filters ${adm ? "c" : ""}" id="ff"><div><label for="q">Número ou assunto</label><input id="q"></div>
+  shell(`<h1>${title}</h1><form class="panel filters ${adm ? "c" : ""}" id="ff"><div><label for="q">Número ou assunto</label><input id="q"></div>
     ${adm && !sid ? `<div><label for="sc">Setor destinatário</label><select id="sc"><option value="">Todos</option>${sectors.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("")}</select></div>` : ""}
     <div><label for="st">Status</label><select id="st"><option value="">Todos</option>${Object.entries(LABEL).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></div>
     <div><label for="fr">De</label><input id="fr" type="date"></div><div><label for="to">Até</label><input id="to" type="date"></div><button class="btn">Pesquisar</button></form><div id="res"></div>`, active);
@@ -221,7 +245,7 @@ async function listView(sid, title, active) {
     const q = new URLSearchParams({ q: $("#q").value, status: $("#st").value, from: $("#fr").value, to: $("#to").value });
     const s = sid || ($("#sc") && $("#sc").value); if (s) q.set("sector_id", s);
     const rows = await api("/api/protocols?" + q);
-    $("#res").innerHTML = `<div class="wrap"><table><tr><th>Número</th><th>Assunto</th><th>${adm ? "Destinatário" : "Origem"}</th><th>Enviado</th><th>Recebido</th><th>Visualização</th><th>Resposta</th><th></th></tr>${rows.map((r) => `<tr><td>${esc(r.protocol_number)}</td><td>${esc(r.subject)}</td><td>${adm ? esc(r.sector) : "Central"}</td><td>${fmt(r.sent_at)}</td><td>${fmt(r.received_at)}</td><td>${r.first_viewed_at ? chip("visualizado") + "<br><small class=muted>" + fmt(r.first_viewed_at) + "</small>" : "Não visualizado"}</td><td>${r.responded_at ? chip("respondido") : "Sem resposta"}</td><td><a class="btn sec sm" style="text-decoration:none" href="#/p/${r.rid}">Abrir</a></td></tr>`).join("") || `<tr><td colspan="8" class="empty">Nenhum protocolo encontrado.</td></tr>`}</table></div>`;
+    $("#res").innerHTML = `<div class="wrap"><table><tr><th>Número</th><th>Assunto</th><th>${adm ? "Destinatário" : "Origem"}</th><th>Enviado</th><th>Recebido</th><th>Visualização</th><th>Resposta</th><th></th></tr>${rows.map((r) => `<tr><td class="num">${esc(r.protocol_number)}</td><td class="subj">${esc(r.subject)}</td><td>${adm ? esc(r.sector) : "Central"}</td><td>${two(r.sent_at)}</td><td>${two(r.received_at)}</td><td><div class="st">${r.first_viewed_at ? chip("visualizado") + `<span class="t">${fmt(r.first_viewed_at)}</span>` : `<span class="chip">Não visualizado</span>`}</div></td><td>${r.responded_at ? chip("respondido") : `<span class="chip">Sem resposta</span>`}</td><td class="nw"><a class="btn sec sm" style="text-decoration:none" href="#/p/${r.rid}">Abrir</a></td></tr>`).join("") || `<tr><td colspan="8" class="empty">Nenhum protocolo encontrado.</td></tr>`}</table></div>`;
   });
   $("#ff").onsubmit = (e) => { e.preventDefault(); load(); };
   load();
