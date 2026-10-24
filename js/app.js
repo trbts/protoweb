@@ -45,13 +45,13 @@ async function api(path, { method = "GET", body, blob, quiet } = {}) {
     return j;
   } finally { if (!quiet && !--busy) $("#bar").hidden = true; }
 }
-function dialog(html, { ok = "Confirmar", cancel, onOk, big } = {}) {
+function dialog(html, { ok = "Confirmar", cancel, onOk, big, required } = {}) {
   const m = document.createElement("div");
   m.className = "modal" + (big ? " big" : "");
-  m.innerHTML = `<div role="dialog">${html}<div class="acts"><button class="btn sec" data-x>${cancel || (onOk ? "Cancelar" : "Fechar")}</button>${onOk ? `<button class="btn" data-ok>${ok}</button>` : ""}</div></div>`;
+  m.innerHTML = `<div role="dialog">${html}<div class="acts">${required ? "" : `<button class="btn sec" data-x>${cancel || (onOk ? "Cancelar" : "Fechar")}</button>`}${onOk ? `<button class="btn" data-ok>${ok}</button>` : ""}</div></div>`;
   document.body.append(m);
   const close = () => m.remove();
-  m.addEventListener("click", (e) => { if (e.target === m || e.target.dataset.x !== undefined) close(); });
+  m.addEventListener("click", (e) => { if (!required && (e.target === m || e.target.dataset.x !== undefined)) close(); });
   const b = $("[data-ok]", m);
   if (b) b.onclick = async () => { b.disabled = true; try { if ((await onOk(m)) !== false) close(); } catch (e) { toast(e.message, true); } b.disabled = false; };
   return m;
@@ -141,13 +141,66 @@ function watchFiles(input) {
 const getFiles = async (input) => { await input._job; return input._files; };
 const toB64 = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(",")[1]); r.onerror = rej; r.readAsDataURL(blob); });
 
+async function downloadFile(id, name) {
+  const blob = await api("/api/files/" + id, { blob: true }), url = URL.createObjectURL(blob), a = document.createElement("a");
+  a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
 async function openFile(id, name, type) {
   const blob = await api("/api/files/" + id, { blob: true }), url = URL.createObjectURL(blob);
-  const m = dialog(`<h2>${esc(name)}</h2>${type === "application/pdf" ? `<iframe src="${url}" title="${esc(name)}"></iframe>` : `<img src="${url}" alt="${esc(name)}">`}`, { big: true });
+  const m = dialog(`<h2>${esc(name)} <button class="btn sec sm" data-dl2>Baixar</button></h2>${type === "application/pdf" ? `<iframe src="${url}" title="${esc(name)}"></iframe>` : `<img src="${url}" alt="${esc(name)}">`}`, { big: true });
   new MutationObserver(() => { if (!document.body.contains(m)) URL.revokeObjectURL(url); }).observe(document.body, { childList: true });
+  $("[data-dl2]", m).onclick = guard(() => downloadFile(id, name));
 }
-const fileList = (files) => files.length ? `<ul>${files.map((f) => `<li><button class="link" data-file="${f.id}" data-name="${esc(f.file_name)}" data-type="${f.mime_type}">${esc(f.file_name)}</button> <span class="muted">(${Math.ceil(f.file_size / 1024)} KB)</span></li>`).join("")}</ul>` : "";
-const bindFiles = (root) => root.querySelectorAll("[data-file]").forEach((b) => (b.onclick = guard(() => openFile(b.dataset.file, b.dataset.name, b.dataset.type))));
+const fileList = (files) => files.length ? `<ul>${files.map((f) => `<li><button class="link" data-file="${f.id}" data-name="${esc(f.file_name)}" data-type="${f.mime_type}">${esc(f.file_name)}</button> <span class="muted">(${Math.ceil(f.file_size / 1024)} KB)</span> · <button class="link" data-dl="${f.id}" data-name="${esc(f.file_name)}">Baixar</button></li>`).join("")}</ul>` : "";
+const bindFiles = (root) => {
+  root.querySelectorAll("[data-file]").forEach((b) => (b.onclick = guard(() => openFile(b.dataset.file, b.dataset.name, b.dataset.type))));
+  root.querySelectorAll("[data-dl]").forEach((b) => (b.onclick = guard(() => downloadFile(b.dataset.dl, b.dataset.name))));
+};
+
+// ---------- cadastro do usuário (nome e WhatsApp)
+const fmtPhone = (p) => { const d = String(p || "").replace(/\D/g, "").replace(/^55(?=\d{10,11}$)/, ""); return d.length === 11 ? `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}` : d.length === 10 ? `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}` : ""; };
+function maskPhone(el) {
+  el.addEventListener("input", () => {
+    const d = el.value.replace(/\D/g, "").slice(0, 11), k = d.length > 10 ? 7 : 6;
+    el.value = d.length > 6 ? `(${d.slice(0, 2)}) ${d.slice(2, k)}-${d.slice(k)}` : d.length > 2 ? `(${d.slice(0, 2)}) ${d.slice(2)}` : d;
+  });
+}
+const profileFields = () => `<div class="field"><label for="pn">Nome completo</label><input id="pn" value="${esc(me.name)}" maxlength="120" autocomplete="name"></div>
+  <div class="field"><label for="pp">Celular com WhatsApp</label><input id="pp" value="${esc(fmtPhone(me.phone))}" inputmode="tel" placeholder="(92) 99999-9999" autocomplete="tel"><div class="note">Informe um número com <b>WhatsApp ativo</b>: é nele que você vai receber os documentos protocolados.</div></div>`;
+async function saveProfile() {
+  const name = $("#pn").value.trim(), digits = $("#pp").value.replace(/\D/g, "");
+  if (name.length < 3) throw new Error("Informe seu nome completo");
+  if (digits.length < 10) throw new Error("Informe o celular com DDD");
+  const r = await api("/api/me/profile", { method: "PUT", body: { name, phone: $("#pp").value } });
+  me.name = r.name; me.phone = r.phone;
+}
+function profileModal() { // aparece no login do usuário de setor até o cadastro ser concluído
+  const m = dialog(`<h2>Complete seu cadastro</h2><p class="muted">Antes de continuar, confirme seus dados.</p>${profileFields()}`, { ok: "Salvar e continuar", required: true, onOk: async () => {
+    await saveProfile(); toast("Dados salvos"); route();
+    if (pref() === null && canNotify() && Notification.permission !== "denied") askOnce();
+  } });
+  maskPhone($("#pp", m));
+}
+// Depois do envio, a central abre o WhatsApp de cada usuário do setor com a mensagem pronta e o link direto do documento.
+async function shareModal(pid) {
+  const d = await api(`/api/protocols/${pid}/share`);
+  const links = d.files.length ? "\n\nDocumento(s):\n" + d.files.map((f) => `${f.name}: ${f.url}`).join("\n") + `\n(Os links valem por ${d.days} dias.)` : "";
+  const tpl = "Olá, {nome}! A Prefeitura Municipal de Careiro encaminhou o protocolo {protocolo} ao setor {setor}.{links}\n\nAcompanhe também pelo ProtoWeb.";
+  const contacts = [];
+  const rows = d.sectors.map((sc) => `<h2 style="margin-top:14px;font-size:15px">${esc(sc.sector)}</h2>` + (sc.users.length ? sc.users.map((u) => {
+    if (!u.phone) return `<div class="ct"><span>${esc(u.name)}</span><span class="muted">sem número cadastrado</span></div>`;
+    contacts.push({ u, sector: sc.sector });
+    return `<div class="ct"><span>${esc(u.name)} <span class="muted">${esc(fmtPhone(u.phone))}</span></span><button class="btn sm" data-c="${contacts.length - 1}">Enviar no WhatsApp</button></div>`;
+  }).join("") : `<p class="muted">Nenhum usuário vinculado a este setor.</p>`)).join("");
+  const m = dialog(`<h2>Avisar por WhatsApp</h2><p class="muted">Protocolo ${esc(d.protocol_number)} enviado. Cada botão abre o WhatsApp com a mensagem pronta.</p>
+    <div class="field"><label for="wt">Mensagem</label><textarea id="wt">${esc(tpl)}</textarea><div class="note">Use {nome}, {setor}, {protocolo} e {links}: cada pessoa recebe a mensagem com os próprios dados. Os links abrem o documento direto e valem por ${d.days} dias; quem tiver o link consegue abrir o arquivo.</div></div>${rows}`, {});
+  m.querySelectorAll("[data-c]").forEach((b) => (b.onclick = () => {
+    const { u, sector } = contacts[b.dataset.c];
+    const msg = $("#wt", m).value.replace(/\{nome\}/g, () => u.name || "").replace(/\{setor\}/g, () => sector).replace(/\{protocolo\}/g, () => d.protocol_number).replace(/\{links\}/g, () => links);
+    window.open(`https://wa.me/${u.phone}?text=${encodeURIComponent(msg)}`, "_blank", "noopener");
+  }));
+}
 
 // ---------- estrutura
 function shell(inner, active) {
@@ -231,7 +284,7 @@ function startNotifications() {
   clearInterval(timer); badge = null; sectorBadge = {}; poll(); timer = setInterval(poll, 60000);
   const p = pref();
   if (p === "on" && canNotify() && Notification.permission === "granted") enablePush(true);
-  else if (p === null && canNotify() && Notification.permission !== "denied") askOnce();
+  else if (p === null && canNotify() && Notification.permission !== "denied" && (me.role === "adm" || me.phone)) askOnce();
 }
 async function logout() {
   clearInterval(timer);
@@ -255,11 +308,12 @@ const views = {
   async config() {
     const perm = canNotify() ? Notification.permission : "unsupported", active = pref() === "on" && perm === "granted";
     const state = active ? "Ativadas" : perm === "denied" ? "Bloqueadas pelo navegador" : perm === "unsupported" ? "Não suportadas neste navegador" : "Desativadas";
-    shell(`<h1>Configurações</h1><div class="panel"><h2>Notificações neste computador</h2>
+    shell(`<h1>Configurações</h1><div class="panel" style="max-width:560px"><h2>Meus dados</h2>${profileFields()}<button class="btn" id="sv">Salvar dados</button></div><div class="panel"><h2>Notificações neste computador</h2>
       <p>Situação: <span class="chip ${active ? "respondido" : ""}">${state}</span></p>
       <p class="muted">${me.role === "adm" ? "Você é avisado quando um setor responde a um protocolo." : "Você é avisado quando chega um protocolo ou uma mensagem da central para o seu setor."} O aviso chega mesmo com o ProtoWeb fechado, desde que o navegador esteja em execução. Vale só para este computador e este navegador. Os contadores nos cards continuam aparecendo.</p>
       ${perm === "denied" ? `<p>O navegador está bloqueando as notificações deste site. Clique no ícone à esquerda do endereço, abra as permissões do site, mude Notificações para Permitir e recarregue a página.</p>` : ""}
       ${perm === "unsupported" ? "" : `<button class="btn" id="tg">${active ? "Desativar notificações" : "Ativar notificações"}</button>`}</div>`, "c");
+    maskPhone($("#pp")); $("#sv").onclick = guard(async () => { await saveProfile(); toast("Dados salvos"); route(); });
     const tg = $("#tg");
     if (tg) tg.onclick = guard(async () => { tg.disabled = true; if (active) await disablePush(); else await enablePush(false); route(); });
   },
@@ -288,6 +342,7 @@ const views = {
         const files = await getFiles($("#a"));
         const r = await api("/api/protocols", { method: "POST", body: { subject: $("#s").value, description: $("#d").value, sector_ids: ids, files } });
         toast("Protocolo enviado: " + r.protocol_number); location.hash = "#/central/protocolos";
+        shareModal(r.id).catch((e) => toast("Protocolo enviado, mas não foi possível preparar o WhatsApp: " + e.message, true));
       } });
     };
   },
@@ -304,7 +359,7 @@ const views = {
   async "central-usuarios"() {
     const [users, secs] = await Promise.all([api("/api/users"), api("/api/sectors")]);
     const name = (id) => secs.find((s) => s.id === id)?.name || "";
-    shell(`<h1>Usuários</h1><p class="muted">Usuários entram pelo Google. O perfil de administrador só pode ser concedido diretamente no banco de dados.</p><div class="wrap"><table><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Setores autorizados</th><th>Acesso</th><th></th></tr>${users.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${u.role === "adm" ? "Administrador" : "Usuário"}</td><td>${u.sector_ids.map((i) => esc(name(i))).join(", ") || "—"}</td><td>${u.active ? "Ativo" : "Bloqueado"}</td><td><button class="btn sec sm" data-u="${u.id}">Editar</button></td></tr>`).join("")}</table></div>`, "u");
+    shell(`<h1>Usuários</h1><p class="muted">Usuários entram pelo Google. O perfil de administrador só pode ser concedido diretamente no banco de dados.</p><div class="wrap"><table><tr><th>Nome</th><th>E-mail</th><th>WhatsApp</th><th>Perfil</th><th>Setores autorizados</th><th>Acesso</th><th></th></tr>${users.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td class="nw">${esc(fmtPhone(u.phone)) || "—"}</td><td>${u.role === "adm" ? "Administrador" : "Usuário"}</td><td>${u.sector_ids.map((i) => esc(name(i))).join(", ") || "—"}</td><td>${u.active ? "Ativo" : "Bloqueado"}</td><td><button class="btn sec sm" data-u="${u.id}">Editar</button></td></tr>`).join("")}</table></div>`, "u");
     document.querySelectorAll("[data-u]").forEach((b) => (b.onclick = () => {
       const u = users.find((x) => x.id == b.dataset.u);
       dialog(`<h2>${esc(u.name)}</h2><label class="checks"><span><input type="checkbox" id="ua" ${u.active ? "checked" : ""}> Acesso ao sistema ativo</span></label><br><label>Setores que pode acessar</label><div class="checks">${secs.map((s) => `<label><input type="checkbox" name="us" value="${s.id}" ${u.sector_ids.includes(s.id) ? "checked" : ""}> ${esc(s.name)}${s.active ? "" : " (desativado)"}</label>`).join("")}</div>`, { ok: "Salvar", onOk: async () => { await api("/api/users/" + u.id, { method: "PUT", body: { active: $("#ua").checked, sector_ids: [...document.querySelectorAll("[name=us]:checked")].map((c) => +c.value) } }); toast("Permissões salvas"); route(); } });
@@ -315,11 +370,12 @@ const views = {
     const orig = d.files.filter((f) => !f.message_id);
     const back = adm ? "#/central/protocolos" : "#/setor/" + r.sector_id;
     shell(`<p><a href="${back}">Voltar à lista</a></p><h1>${esc(p.protocol_number)} — ${esc(p.subject)}</h1>
-    <div class="two"><div><div class="panel"><p><b>Destinatário:</b> ${esc(r.sector_name)} &nbsp; ${chip(r.status)}</p><p class="muted">Enviado ${fmt(r.sent_at)} · Recebido ${fmt(r.received_at)} · Visualizado ${fmt(r.first_viewed_at)} · Respondido ${fmt(r.responded_at)}</p><p style="white-space:pre-wrap">${esc(p.description)}</p>${fileList(orig)}</div>
+    <div class="two"><div><div class="panel"><p><b>Destinatário:</b> ${esc(r.sector_name)} &nbsp; ${chip(r.status)}</p><p class="muted">Enviado ${fmt(r.sent_at)} · Recebido ${fmt(r.received_at)} · Visualizado ${fmt(r.first_viewed_at)} · Respondido ${fmt(r.responded_at)}</p><p style="white-space:pre-wrap">${esc(p.description)}</p>${fileList(orig)}${adm ? `<p><button class="btn sec sm" id="wa">Avisar por WhatsApp</button></p>` : ""}</div>
     <div class="panel"><h2>Comunicação</h2>${d.messages.map((m) => `<div class="msg ${m.role === "adm" ? "adm" : ""}"><small><b>${esc(m.author)}</b> · ${m.role === "adm" ? "Central" : esc(r.sector_name)} · ${fmt(m.created_at)}</small><div style="white-space:pre-wrap">${esc(m.message)}</div>${fileList(d.files.filter((f) => f.message_id === m.id))}</div>`).join("") || `<p class="muted">Nenhuma mensagem ainda.</p>`}
     <form id="rf"><div class="field"><label for="t">${adm ? "Enviar mensagem ao setor" : "Responder à central"}</label><textarea id="t" maxlength="5000"></textarea></div><div class="field"><input id="rfile" type="file" multiple accept="application/pdf,image/*" aria-label="Anexos"></div><button class="btn">${adm ? "Enviar mensagem" : "Enviar resposta"}</button></form></div></div>
     <div class="panel"><h2>Histórico</h2><ul class="tl">${d.events.map((e) => `<li>${esc(EVENT[e.event_type] || e.event_type)}${e.author ? " · " + esc(e.author) : ""}<br><small class="muted">${fmt(e.created_at)}</small></li>`).join("")}</ul></div></div>`, adm ? "l" : "m");
     bindFiles($("main"));
+    if ($("#wa")) $("#wa").onclick = guard(() => shareModal(p.id));
     poll(); // abrir o protocolo conclui o aviso: atualiza os contadores
     watchFiles($("#rfile"));
     $("#rf").onsubmit = guard(async (e) => {
@@ -370,5 +426,6 @@ onAuthStateChanged(auth, async (user) => {
   if (!user) { me = null; clearInterval(timer); sessionStorage.clear(); return loginView(); }
   try {
     const r = await api("/api/me"); me = r.user; sectors = r.sectors; route(); startNotifications();
+    if (me.role !== "adm" && !me.phone) profileModal();
   } catch (e) { toast(e.message, true); await signOut(auth); }
 });
