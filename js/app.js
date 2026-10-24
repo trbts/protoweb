@@ -1,6 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getMessaging, getToken, onMessage, deleteToken, isSupported } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js";
-import { VAPID_KEY } from "./config.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 const firebaseConfig = {
@@ -15,6 +14,8 @@ const API = "https://protoweb.dw0mc7.workers.dev";
 const MAX_MB = 1;
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
+// Chave pública do Firebase: Project settings > Cloud Messaging > Web Push certificates > Generate key pair.
+const VAPID_KEY = "BL6Gd6JAaUQXJF-I2Y4fczJATe3O87oao4LQbRB3uKb1vSxLTFjC4cbOhTTJLfiIDv_j5_2SmX4ODgblAbeGFFg";
 const swReady = "serviceWorker" in navigator ? navigator.serviceWorker.register("sw.js").then(() => navigator.serviceWorker.ready).catch(() => null) : Promise.resolve(null);
 
 const $ = (s, r = document) => r.querySelector(s);
