@@ -93,3 +93,11 @@ textarea{min-height:110px;resize:vertical}
 @media(prefers-reduced-motion:reduce){.bar{animation:none}}
 .tag.nb{background:var(--pri);color:#fff;font-weight:500}
 .who .btn{margin-right:14px}
+.side nav a{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.nbadge,.cbadge{background:#d0343c;color:#fff;font-size:12px;font-weight:600;min-width:20px;height:20px;line-height:20px;padding:0 6px;border-radius:99px;text-align:center}
+.card{position:relative}
+.cbadge{position:absolute;top:-9px;right:-9px;box-shadow:0 0 0 2px var(--bg)}
+.nbadge[hidden],.cbadge[hidden]{display:none}
+.newb{display:inline-block;margin-top:4px;padding:0 9px;border-radius:99px;background:#d0343c;color:#fff;font-size:12px;font-weight:600}
+tr.new td{background:#fcf8ff}
+tr.new td:first-child{box-shadow:inset 4px 0 0 #d0343c}
