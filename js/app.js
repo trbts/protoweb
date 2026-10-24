@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBZLo5U4J4KqzVYoiig8L-wRfeDDuLLLWg",
+  apiKey: "AIzaSyBZLo5U4JkQvzFYoig8L-wRfe2DDuLLLWg",
   authDomain: "protoweb-4f4b1.firebaseapp.com",
   projectId: "protoweb-4f4b1",
   storageBucket: "protoweb-4f4b1.firebasestorage.app",
