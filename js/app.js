@@ -1,4 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getMessaging, getToken, onMessage, isSupported } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 const firebaseConfig = {
@@ -11,7 +12,11 @@ const firebaseConfig = {
 };
 const API = "https://protoweb.dw0mc7.workers.dev";
 const MAX_MB = 1;
-const auth = getAuth(initializeApp(firebaseConfig));
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+// Chave pública do Firebase: Project settings > Cloud Messaging > Web Push certificates > Generate key pair.
+const VAPID_KEY = "BL6Gd6JAaUQXJF-I2Y4fczJATe3O87oao4LQbRB3uKb1vSxLTFjC4cbOhTTJLfiIDv_j5_2SmX4ODgblAbeGFFg";
+const swReady = "serviceWorker" in navigator ? navigator.serviceWorker.register("sw.js").then(() => navigator.serviceWorker.ready).catch(() => null) : Promise.resolve(null);
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -29,8 +34,8 @@ function toast(msg, err) {
   t.className = "toast" + (err ? " err" : ""); t.textContent = msg;
   $("#toasts").append(t); setTimeout(() => t.remove(), 4500);
 }
-async function api(path, { method = "GET", body, blob } = {}) {
-  busy++; $("#bar").hidden = false;
+async function api(path, { method = "GET", body, blob, quiet } = {}) {
+  if (!quiet) { busy++; $("#bar").hidden = false; }
   try {
     const token = await auth.currentUser.getIdToken();
     const r = await fetch(API + path, { method, headers: { Authorization: "Bearer " + token, ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
@@ -38,7 +43,7 @@ async function api(path, { method = "GET", body, blob } = {}) {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || "Erro " + r.status);
     return j;
-  } finally { if (!--busy) $("#bar").hidden = true; }
+  } finally { if (!quiet && !--busy) $("#bar").hidden = true; }
 }
 function dialog(html, { ok = "Confirmar", onOk, big } = {}) {
   const m = document.createElement("div");
@@ -151,14 +156,67 @@ function shell(inner, active) {
   $("#app").innerHTML = `<div class="shell"><aside class="side"><div class="brand">ProtoWeb</div><nav>
     ${adm ? nav("#/central", "Painel", "p") + nav("#/central/protocolos", "Protocolos", "l") + nav("#/central/novo", "Novo protocolo", "n") + nav("#/central/setores", "Setores", "s") + nav("#/central/usuarios", "Usuários", "u") : ""}
     ${nav("#/setores", adm ? "Ver como setor" : "Meus setores", "m")}</nav></aside>
-    <div><header class="top"><span><span class="org">Prefeitura Municipal de Careiro</span>${sec ? `<span class="tag">Setor: ${esc(sec.name)}</span>` : ""}</span><span class="who">${esc(me.name)} (${esc(me.email)}) <button class="link" id="out">Sair</button></span></header>
+    <div><header class="top"><span><span class="org">Prefeitura Municipal de Careiro</span>${sec ? `<span class="tag">Setor: ${esc(sec.name)}</span>` : ""}<span id="nb"></span></span><span class="who"><button class="btn sec sm" id="pushbtn" hidden>Ativar notificações</button>${esc(me.name)} (${esc(me.email)}) <button class="link" id="out">Sair</button></span></header>
     <main>${inner}</main></div></div>`;
-  $("#out").onclick = () => signOut(auth);
+  $("#out").onclick = logout;
+  $("#pushbtn").onclick = () => enablePush(false);
+  paintBadge(); paintPushBtn();
 }
 const loginView = () => {
   $("#app").innerHTML = `<div class="login"><div class="panel"><h1>ProtoWeb</h1><p class="org-l">Prefeitura Municipal de Careiro</p><p class="muted">Protocolos e documentos</p><button class="btn" id="g">Entrar com Google</button></div></div>`;
   $("#g").onclick = () => signInWithPopup(auth, new GoogleAuthProvider()).catch((e) => toast("Não foi possível entrar: " + e.code, true));
 };
+
+// ---------- notificações
+// Nível 1 (app aberto): consulta a API a cada minuto, mostra o contador e avisa quando chega novidade.
+// Nível 2 (app fechado): push do Firebase Cloud Messaging, ativado por computador.
+let badge = null, timer = null, listening = false;
+function paintBadge() {
+  const n = badge || 0, el = $("#nb");
+  if (el) el.innerHTML = n ? `<span class="tag nb">${n} ${me.role === "adm" ? "resposta(s) nova(s)" : "novo(s)"}</span>` : "";
+  document.title = (n ? `(${n}) ` : "") + "ProtoWeb · Prefeitura Municipal de Careiro";
+  try { n ? navigator.setAppBadge?.(n) : navigator.clearAppBadge?.(); } catch { /* sem suporte */ }
+}
+function paintPushBtn() { const b = $("#pushbtn"); if (b) b.hidden = !("Notification" in window) || Notification.permission === "granted"; }
+async function showAlert(body) {
+  if (document.visibilityState === "visible") return toast(body);
+  if ("Notification" in window && Notification.permission === "granted") (await swReady)?.showNotification("ProtoWeb", { body, icon: "icon-192.png", tag: "protoweb" });
+}
+async function poll() {
+  try {
+    const { count } = await api("/api/notifications", { quiet: true });
+    const prev = badge; badge = count; paintBadge();
+    if (prev !== null && count > prev) showAlert(me.role === "adm" ? "Nova resposta em um protocolo." : "Novo protocolo ou mensagem recebida.");
+  } catch { /* tenta de novo no próximo ciclo */ }
+}
+async function enablePush(silent) {
+  try {
+    if (!("Notification" in window) || !(await isSupported())) throw new Error("Este navegador não suporta notificações.");
+    if (VAPID_KEY.startsWith("COLE")) throw new Error("Notificações com o aplicativo fechado ainda não foram configuradas (chave VAPID).");
+    if ((await Notification.requestPermission()) !== "granted") throw new Error("Permita as notificações nas configurações do navegador.");
+    const reg = await swReady; if (!reg) throw new Error("Não foi possível iniciar o serviço de notificações.");
+    const msg = getMessaging(app), token = await getToken(msg, { vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
+    await api("/api/push/register", { method: "POST", body: { token }, quiet: true });
+    if (!listening) { listening = true; onMessage(msg, (p) => { toast(p.notification?.body || "Nova notificação"); poll(); }); }
+    if (!silent) toast("Notificações ativadas neste computador");
+  } catch (e) { if (!silent) toast(e.message, true); }
+  paintPushBtn();
+}
+function startNotifications() {
+  clearInterval(timer); badge = null; poll(); timer = setInterval(poll, 60000);
+  if ("Notification" in window && Notification.permission === "granted") enablePush(true);
+}
+async function logout() {
+  clearInterval(timer);
+  try { // este computador deixa de receber avisos da conta que saiu
+    if ("Notification" in window && Notification.permission === "granted" && !VAPID_KEY.startsWith("COLE")) {
+      const token = await getToken(getMessaging(app), { vapidKey: VAPID_KEY, serviceWorkerRegistration: await swReady });
+      await api("/api/push/unregister", { method: "POST", body: { token }, quiet: true });
+    }
+  } catch { /* segue com a saída */ }
+  try { navigator.clearAppBadge?.(); } catch { /* sem suporte */ }
+  signOut(auth);
+}
 
 // ---------- telas
 const views = {
@@ -270,8 +328,8 @@ views["central-protocolos"] = views.protocolos; views["central-novo"] = views.no
 addEventListener("hashchange", route);
 
 onAuthStateChanged(auth, async (user) => {
-  if (!user) { me = null; sessionStorage.clear(); return loginView(); }
+  if (!user) { me = null; clearInterval(timer); sessionStorage.clear(); return loginView(); }
   try {
-    const r = await api("/api/me"); me = r.user; sectors = r.sectors; route();
+    const r = await api("/api/me"); me = r.user; sectors = r.sectors; route(); startNotifications();
   } catch (e) { toast(e.message, true); await signOut(auth); }
 });
