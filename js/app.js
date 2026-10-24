@@ -57,6 +57,8 @@ function dialog(html, { ok = "Confirmar", cancel, onOk, big, required } = {}) {
   if (b) b.onclick = async () => { b.disabled = true; try { if ((await onOk(m)) !== false) close(); } catch (e) { toast(e.message, true); } b.disabled = false; };
   return m;
 }
+// Com um modal aberto, o fundo fica bloqueado (cliques, foco e rolagem).
+new MutationObserver(() => { const open = !!document.querySelector(".modal"), app = $("#app"); if (app) app.inert = open; document.body.classList.toggle("modal-open", open); }).observe(document.body, { childList: true });
 const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
 
 // Lê arquivos: valida o formato e, se passar de 1 MB, compacta antes de enviar (Base64 no D1).
@@ -210,7 +212,7 @@ function shell(inner, active) {
   $("#app").innerHTML = `<div class="shell"><aside class="side"><div class="brand">ProtoWeb</div><nav>
     ${adm ? nav("#/central", "Painel", "p") + nav("#/central/protocolos", "Protocolos", "l", "nb-prot") + nav("#/central/novo", "Novo protocolo", "n") + nav("#/central/setores", "Setores", "s") + nav("#/central/usuarios", "Usuários", "u") : ""}
     ${adm ? "" : sectors.length > 1 ? sectors.map((s) => nav("#/setor/" + s.id, esc(s.name), "m" + s.id, "nb-s" + s.id)).join("") : nav("#/setores", "Caixa de entrada", "m", "nb-set")}${nav("#/config", "Configurações", "c")}</nav></aside>
-    <div><header class="top"><span><span class="org">Prefeitura Municipal de Careiro</span>${sec && !adm ? `<span class="tag">Setor: ${esc(sec.name)}</span>` : ""}</span><span class="who">${esc(me.name)} (${esc(me.email)}) <button class="link" id="out">Sair</button></span></header>
+    <div><header class="top"><span class="brandbar"><img class="logo" src="logo.svg" alt="Brasão de Careiro"><span class="org">Prefeitura Municipal de Careiro</span>${sec && !adm ? `<span class="tag">Setor: ${esc(sec.name)}</span>` : ""}</span><span class="who">${esc(me.name)} (${esc(me.email)}) <button class="link" id="out">Sair</button></span></header>
     <main>${inner}</main></div></div>`;
   $("#out").onclick = logout;
   paintBadge();
