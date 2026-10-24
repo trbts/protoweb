@@ -91,3 +91,5 @@ textarea{min-height:110px;resize:vertical}
 @media(max-width:1200px){.filters,.filters.c{grid-template-columns:repeat(3,minmax(0,1fr))}.filters>:first-child{grid-column:1/-1}}
 @media(max-width:900px){.shell{grid-template-columns:1fr}.side{position:static;height:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:12px}.brand{padding:0 10px 0 0}.side nav{display:flex;flex-wrap:wrap;gap:4px}.two{grid-template-columns:1fr}.top{padding:10px 16px;height:auto;flex-wrap:wrap}main{padding:18px 16px}.filters,.filters.c{grid-template-columns:1fr 1fr}}
 @media(prefers-reduced-motion:reduce){.bar{animation:none}}
+.tag.nb{background:var(--pri);color:#fff;font-weight:500}
+.who .btn{margin-right:14px}
