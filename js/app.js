@@ -137,7 +137,7 @@ async function openFile(id, name, type) {
   new MutationObserver(() => { if (!document.body.contains(m)) URL.revokeObjectURL(url); }).observe(document.body, { childList: true });
   $("[data-dl2]", m).onclick = guard(() => downloadFile(id, name));
 }
-const fileList = (files) => files.length ? `<ul>${files.map((f) => `<li><button class="link" data-file="${f.id}" data-name="${esc(f.file_name)}" data-type="${f.mime_type}">${esc(f.file_name)}</button> <span class="muted">(${Math.ceil(f.file_size / 1024)} KB)</span> · <button class="link" data-dl="${f.id}" data-name="${esc(f.file_name)}">Baixar</button></li>`).join("")}</ul>` : "";
+const fileList = (files) => files.length ? `<ul>${files.map((f) => f.archived_at ? `<li><span class="muted">${esc(f.file_name)} — arquivo removido em ${new Date(f.archived_at).toLocaleDateString("pt-BR")} (arquivamento mensal)</span></li>` : `<li><button class="link" data-file="${f.id}" data-name="${esc(f.file_name)}" data-type="${f.mime_type}">${esc(f.file_name)}</button> <span class="muted">(${Math.ceil(f.file_size / 1024)} KB)</span> · <button class="link" data-dl="${f.id}" data-name="${esc(f.file_name)}">Baixar</button></li>`).join("")}</ul>` : "";
 const bindFiles = (root) => {
   root.querySelectorAll("[data-file]").forEach((b) => (b.onclick = guard(() => openFile(b.dataset.file, b.dataset.name, b.dataset.type))));
   root.querySelectorAll("[data-dl]").forEach((b) => (b.onclick = guard(() => downloadFile(b.dataset.dl, b.dataset.name))));
@@ -187,6 +187,64 @@ async function shareModal(pid) {
   }));
 }
 
+// ---------- arquivamento mensal (administrador)
+const monthName = (m) => { const [y, mo] = m.split("-").map(Number); return new Date(y, mo - 1, 1).toLocaleDateString("pt-BR", { month: "long", year: "numeric" }); };
+const loadScript = (src) => new Promise((ok, no) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = () => no(new Error("Não foi possível carregar a biblioteca de ZIP. Verifique a conexão.")); document.head.append(s); });
+function progressModal(title, text) {
+  const m = dialog(`<div class="conv"><div class="spin" aria-hidden="true"></div><h2>${esc(title)}</h2><p class="muted">${esc(text)}</p><div class="pbar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></div><b class="pct">0%</b><p class="muted plabel"></p></div>`, { required: true });
+  const bar = $(".pbar i", m), pct = $(".pct", m), bx = $(".pbar", m), lb = $(".plabel", m);
+  return { set(p, label) { const v = Math.round(Math.min(1, p) * 100); bar.style.width = v + "%"; pct.textContent = v + "%"; bx.setAttribute("aria-valuenow", v); if (label) lb.textContent = label; }, close() { m.remove(); } };
+}
+const safe = (s) => String(s || "").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim().slice(0, 100) || "_";
+const csvq = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+const saveParts = (parts) => parts.forEach((p, i) => setTimeout(() => { const u = URL.createObjectURL(p.blob), a = document.createElement("a"); a.href = u; a.download = p.name; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 60000); }, i * 800));
+async function buildZips(month, files, pm) {
+  if (!window.JSZip) await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js");
+  const groups = []; let cur = [], size = 0; // cada ZIP tem no máximo ~200 MB
+  for (const f of files) { if (size + f.file_size > 200 * 1048576 && cur.length) { groups.push(cur); cur = []; size = 0; } cur.push(f); size += f.file_size; }
+  if (cur.length) groups.push(cur);
+  const parts = []; let done = 0;
+  for (let g = 0; g < groups.length; g++) {
+    const list = groups[g], zip = new JSZip(), rows = [["caminho", "protocolo", "setor", "enviado_em", "tamanho_kb"]]; let idx = 0;
+    const work = async () => {
+      while (idx < list.length) {
+        const f = list[idx++], blob = await api("/api/files/" + f.id, { blob: true, quiet: true });
+        if (!blob || !blob.size) throw new Error(`Falha ao baixar "${f.file_name}". Nada foi apagado; tente novamente.`);
+        const path = `${month}/${safe(f.sector || "Central")}/${safe(f.protocol_number)}/${f.id}_${safe(f.file_name)}`;
+        zip.file(path, blob, { compression: f.mime_type === "application/pdf" ? "DEFLATE" : "STORE" });
+        rows.push([path, f.protocol_number, f.sector || "Central", fmt(f.created_at), Math.ceil(f.file_size / 1024)]);
+        pm.set((++done / files.length) * 0.9, `Baixando imagem ${done} de ${files.length}`);
+      }
+    };
+    await Promise.all([work(), work(), work(), work()]);
+    zip.file("lista.csv", "\ufeff" + rows.map((r) => r.map(csvq).join(";")).join("\r\n"));
+    const out = await zip.generateAsync({ type: "blob" }, (mt) => pm.set(0.9 + 0.1 * ((g + mt.percent / 100) / groups.length), "Gerando o ZIP…"));
+    if (!out.size) throw new Error("Não foi possível gerar o ZIP. Nada foi apagado.");
+    parts.push({ name: `protoweb-${month}${groups.length > 1 ? `-parte${g + 1}` : ""}.zip`, blob: out, ids: list.map((f) => f.id) });
+  }
+  return parts;
+}
+async function archiveFlow(p) {
+  const month = p.month, label = monthName(month), { files } = await api(`/api/archive/${month}/files`);
+  if (!files.length) { toast("Não há anexos pendentes neste mês."); return poll(); }
+  const mb = (files.reduce((a, f) => a + f.file_size, 0) / 1048576).toFixed(1);
+  const wipe = async (parts) => {
+    const ids = parts.flatMap((x) => x.ids), pm = progressModal("Apagando imagens do sistema", "Aguarde até chegar a 100%.");
+    try {
+      for (let i = 0; i < ids.length; i += 50) { await api(`/api/archive/${month}/confirm`, { method: "POST", body: { ids: ids.slice(i, i + 50) }, quiet: true }); pm.set(Math.min(i + 50, ids.length) / ids.length, `${Math.min(i + 50, ids.length)} de ${ids.length}`); }
+      toast(`Arquivamento de ${label} concluído`);
+    } finally { pm.close(); poll(); route(); }
+  };
+  const run = guard(async () => {
+    const pm = progressModal(`Arquivando ${label}`, "Não feche esta janela até chegar a 100%."); let parts;
+    try { parts = await buildZips(month, files, pm); pm.set(1); } finally { pm.close(); }
+    saveParts(parts);
+    const m = dialog(`<h2>Confirmar arquivamento</h2><p>O ZIP de <b>${esc(label)}</b> (${parts.length > 1 ? parts.length + " partes" : "1 arquivo"}, ${files.length} imagens) foi gerado e enviado para download.</p><p>Confira na pasta de Downloads se ${parts.length > 1 ? "todos os arquivos foram salvos" : "o arquivo foi salvo"} e se ${parts.length > 1 ? "abrem" : "abre"} normalmente. <b>Só confirme com o download completo:</b> ao confirmar, as imagens de ${esc(label)} são apagadas do sistema. Protocolos, mensagens e histórico permanecem.</p><p><button class="link" id="dl-again">Baixar novamente</button></p>`, { ok: "Sim, apagar as imagens", cancel: "Ainda não apagar", onOk: () => { setTimeout(guard(() => wipe(parts)), 50); } });
+    $("#dl-again", m).onclick = () => saveParts(parts);
+  });
+  dialog(`<h2>Arquivar anexos de ${esc(label)}</h2><p>${files.length} imagem(ns), cerca de ${mb} MB. O sistema vai baixar as imagens, gerar o ZIP e salvá-lo no seu computador, organizado por setor e protocolo.</p><p class="muted">Nada é apagado antes da sua confirmação. Mantenha esta aba aberta durante o processo.</p>`, { ok: "Iniciar", onOk: () => { setTimeout(run, 50); } });
+}
+
 // ---------- estrutura
 const svg = (d) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
 const ICON = {
@@ -197,6 +255,7 @@ const ICON = {
   n: svg('<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>'),
   s: svg('<path d="M4 21V7l8-4 8 4v14"/><path d="M9 21v-6h6v6M9 10h.01M15 10h.01"/>'),
   u: svg('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.2a6.5 6.5 0 0 1 3.5 5.8"/>'),
+  arch: svg('<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4"/>'),
   back: svg('<path d="M19 12H5M12 19l-7-7 7-7"/>'),
   out: svg('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>'),
   user: '<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="#5d5a66"/><circle cx="12" cy="9.5" r="4" fill="#e9e6f0"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0a12 12 0 0 1-15 0z" fill="#e9e6f0"/></svg>',
@@ -216,7 +275,7 @@ function shell(inner, active) {
   const nav = (h, t, k, b) => `<a href="${h}" data-k="${k}" class="${active === k ? "on" : ""}"><span class="ni">${ICON[k] || ICON.m}</span><span class="nt">${t}</span>${b ? `<span class="nbadge" id="${b}" hidden></span>` : ""}</a>`;
   $("#app").innerHTML = `<div class="shell" data-sig="${sig}"><header class="top"><span class="brandbar"><img class="logo" src="logo.svg" alt="Brasão de Careiro"><span class="org">Prefeitura Municipal de Careiro</span><span class="tagwrap">${tag}</span></span><span class="who"><button class="uchip" id="um" aria-haspopup="true" aria-expanded="false" title="${esc(me.name)} (${esc(me.email)})">${avatar(34)}<b>${esc(String(me.name || me.email).split(" ")[0])}</b></button>
       <div class="umenu" id="umenu" hidden><div class="uinfo">${avatar(64)}<b>${esc(me.name)}</b><span class="muted">${esc(me.email)}</span></div><button class="btn sec" id="out">${ICON.out}<span>Sair</span></button></div></span></header>
-    <div class="body"><aside class="side"><nav>
+    ${adm ? '<div class="abanner" id="abanner" hidden></div>' : ""}<div class="body"><aside class="side"><nav>
     ${adm ? nav("#/central", "Painel", "p") + nav("#/central/protocolos", "Protocolos", "l", "nb-prot") + nav("#/central/novo", "Novo protocolo", "n") + nav("#/central/setores", "Setores", "s") + nav("#/central/usuarios", "Usuários", "u") : ""}
     ${adm ? "" : sectors.length > 1 ? sectors.map((x) => nav("#/setor/" + x.id, esc(x.name), "m" + x.id, "nb-s" + x.id)).join("") : nav("#/setores", "Caixa de entrada", "m", "nb-set")}${nav("#/config", "Configurações", "c")}</nav></aside>
     <main class="fade">${inner}</main></div></div>`;
@@ -233,7 +292,7 @@ const loginView = () => {
 
 // ---------- notificações
 // Contadores nos cards (consulta a cada minuto) e avisos do Windows/push, controlados em Configurações.
-let badge = null, sectorBadge = {}, timer = null, listening = false;
+let badge = null, sectorBadge = {}, timer = null, listening = false, archivePending = [];
 const prefKey = () => "pw_notif_" + me.id;
 const pref = () => { try { return localStorage.getItem(prefKey()); } catch { return null; } };
 const setPref = (v) => { try { localStorage.setItem(prefKey(), v); } catch { /* sem armazenamento */ } };
@@ -242,6 +301,16 @@ const newLabel = (r) => (me.role === "adm" ? (r.ru ? "Nova resposta" : "") : !r.
 function paintBadge() {
   const n = badge || 0, adm = me.role === "adm";
   const set = (el, v) => { if (el) { el.hidden = !v; el.textContent = v > 99 ? "99+" : v || ""; } };
+  const ab = $("#abanner");
+  if (ab) {
+    const p = archivePending[0], key = archivePending.map((x) => x.month).join();
+    ab.hidden = !p;
+    if (p && ab.dataset.k !== key) {
+      ab.dataset.k = key;
+      ab.innerHTML = `<span class="ai">${ICON.arch}</span><span>Os anexos de <b>${esc(monthName(p.month))}</b> precisam ser arquivados${archivePending.length > 1 ? ` (mais ${archivePending.length - 1} mês(es) pendente(s) depois deste)` : ""}. Enquanto isso não for feito, as imagens continuam ocupando espaço no banco.</span><button class="btn sm" id="abtn">Arquivar agora</button>`;
+      $("#abtn").onclick = guard(() => archiveFlow(p));
+    }
+  }
   set($("#nb-prot"), adm ? n : 0);
   set($("#nb-set"), adm ? 0 : n);
   if (!adm) sectors.forEach((s) => set($("#nb-s" + s.id), sectorBadge[s.id] || 0));
@@ -257,7 +326,8 @@ async function showAlert(body) {
 }
 async function poll() {
   try {
-    const { count, sectors } = await api("/api/notifications", { quiet: true });
+    const { count, sectors, archive } = await api("/api/notifications", { quiet: true });
+    archivePending = archive || [];
     const prev = badge; badge = count; sectorBadge = sectors || {}; paintBadge();
     if (prev !== null && count > prev) showAlert(me.role === "adm" ? "Nova resposta em um protocolo." : "Novo protocolo ou mensagem recebida.");
   } catch { /* tenta de novo no próximo ciclo */ }
