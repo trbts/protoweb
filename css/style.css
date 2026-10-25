@@ -213,3 +213,14 @@ select{appearance:none;-webkit-appearance:none;padding-right:34px;background:#ff
 .cfg{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;align-items:start}
 .cfg .panel{margin-bottom:0}
 @media(max-width:900px){.cfg{grid-template-columns:1fr}.umenu{right:-8px}}
+
+.conv{text-align:center;padding:8px 4px}
+.conv h2{margin:14px 0 6px;font-size:18px}
+.conv .pbar{height:12px;background:#eee9f6;border-radius:99px;overflow:hidden;margin:16px 0 8px}
+.conv .pbar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#e8286f,#a68fe3);border-radius:99px;transition:width .2s ease}
+.conv .pct{font-size:20px;color:#2a1a4d}
+.spin{width:38px;height:38px;margin:0 auto;border:4px solid #eee9f6;border-top-color:#d6246e;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.modal:has(.conv)>div{width:min(420px,100%)}
+.modal:has(.conv) .acts{display:none}
+@media(prefers-reduced-motion:reduce){.spin{animation-duration:2s}}
