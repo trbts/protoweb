@@ -11,7 +11,6 @@ const firebaseConfig = {
   appId: "1:18056559923:web:649b5ce4824e7a94c51246"
 };
 const API = "https://protoweb.dw0mc7.workers.dev";
-const MAX_MB = 1;
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 // Chave pública do Firebase: Project settings > Cloud Messaging > Web Push certificates > Generate key pair.
@@ -63,83 +62,64 @@ document.addEventListener("click", (e) => { const m = $("#umenu"); if (m && !m.h
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") { const m = $("#umenu"); if (m) m.hidden = true; } });
 const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
 
-// Lê arquivos: valida o formato e, se passar de 1 MB, compacta antes de enviar (Base64 no D1).
-const LIMIT = MAX_MB * 1048576, TARGET = Math.floor(LIMIT * 0.95);
-async function readFiles(list) {
-  const out = [];
-  for (const f of list) {
-    if (!["application/pdf", "image/jpeg", "image/png", "image/webp"].includes(f.type)) throw new Error(`"${f.name}": use PDF, JPG, PNG ou WebP`);
-    let blob = f, name = f.name;
-    if (f.size > LIMIT) {
-      toast(`Compactando "${f.name}"...`);
-      blob = f.type === "application/pdf" ? await packPdf(f) : await packImage(f);
-      if (!blob) throw new Error(`Não foi possível reduzir "${f.name}" para menos de ${MAX_MB} MB sem perder muita qualidade. Divida o documento em partes.`);
-      if (blob.type === "image/jpeg" && f.type !== "image/jpeg") name = name.replace(/\.\w+$/, "") + ".jpg";
-      toast(`"${f.name}" compactado: ${(f.size / 1048576).toFixed(1)} MB para ${(blob.size / 1048576).toFixed(2)} MB`);
+// Anexos: só imagens. Cada uma é convertida para WebP e, se passar de 100 KB, compactada até caber; depois vai em Base64.
+const TARGET = 100 * 1024, MAX_SIDE = 2560, MAX_FILES = 3;
+const tick = () => new Promise((r) => setTimeout(r));
+async function toWebp(file, onStep) {
+  const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
+  const base = Math.min(1, MAX_SIDE / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas"), g = c.getContext("2d");
+  const scales = [1, 0.85, 0.7, 0.55, 0.4, 0.3].map((k) => k * base), quals = [0.85, 0.75, 0.65, 0.55, 0.45, 0.35], max = scales.length * quals.length;
+  let n = 0, best = null;
+  for (const k of scales) {
+    c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
+    g.clearRect(0, 0, c.width, c.height); g.drawImage(bmp, 0, 0, c.width, c.height);
+    for (const q of quals) {
+      const b = await new Promise((r) => c.toBlob(r, "image/webp", q));
+      if (!b || b.type !== "image/webp") throw new Error("Este navegador não consegue converter imagens para WebP. Use o Chrome ou o Edge atualizado.");
+      if (!best || b.size < best.size) best = b;
+      onStep(++n / max); await tick();
+      if (b.size <= TARGET) { bmp.close?.(); return b; }
     }
-    out.push({ name, type: blob.type, data: await toB64(blob) });
+  }
+  bmp.close?.();
+  if (best && best.size <= TARGET * 1.4) return best; // quase lá: aceita
+  throw new Error(`Não foi possível reduzir "${file.name}" para cerca de 100 KB. Use uma imagem menor.`);
+}
+async function readFiles(list, onProgress) {
+  const out = [];
+  for (let i = 0; i < list.length; i++) {
+    const f = list[i], step = (p) => onProgress((i + Math.min(p, 0.95)) / list.length);
+    if (!["image/jpeg", "image/png", "image/webp"].includes(f.type)) throw new Error(`"${f.name}": envie apenas imagens (JPG, PNG ou WebP)`);
+    const blob = f.type === "image/webp" && f.size <= TARGET ? f : await toWebp(f, step);
+    out.push({ name: f.name.replace(/\.\w+$/, "") + ".webp", type: "image/webp", data: await toB64(blob) });
+    onProgress((i + 1) / list.length);
   }
   return out;
 }
-// Imagem: mantém o tamanho original e baixa a qualidade aos poucos; só reduz as dimensões se for preciso.
-async function packImage(file) {
-  const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
-  const c = document.createElement("canvas"), g = c.getContext("2d");
-  for (const k of [1, 0.9, 0.8, 0.7, 0.6, 0.5]) {
-    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
-    g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(bmp, 0, 0, c.width, c.height);
-    for (const q of [0.9, 0.82, 0.75, 0.68]) {
-      const b = await new Promise((r) => c.toBlob(r, "image/jpeg", q));
-      if (b && b.size <= TARGET) return b;
-    }
-  }
-  return null;
-}
-const loadScript = (src) => new Promise((ok, no) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = () => no(new Error("Não foi possível carregar a biblioteca de compactação")); document.head.append(s); });
-// PDF: 1) re-salva sem mexer no conteúdo (mantém o texto); 2) se ainda passar, refaz as páginas como imagens JPEG.
-async function packPdf(file) {
-  const CDN = "https://cdnjs.cloudflare.com/ajax/libs/";
-  if (!window.PDFLib) await loadScript(CDN + "pdf-lib/1.17.1/pdf-lib.min.js");
-  const buf = await file.arrayBuffer();
-  try {
-    const out = await (await PDFLib.PDFDocument.load(buf, { ignoreEncryption: true })).save({ useObjectStreams: true });
-    if (out.length <= TARGET) return new Blob([out], { type: "application/pdf" });
-  } catch { /* segue para a etapa 2 */ }
-  if (!window.pdfjsLib) { await loadScript(CDN + "pdf.js/3.11.174/pdf.min.js"); pdfjsLib.GlobalWorkerOptions.workerSrc = CDN + "pdf.js/3.11.174/pdf.worker.min.js"; }
-  const pdf = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
-  const c = document.createElement("canvas"), g = c.getContext("2d");
-  for (const [scale, q] of [[2.5, 0.8], [2, 0.75], [2, 0.62], [1.6, 0.62], [1.4, 0.55]]) {
-    const doc = await PDFLib.PDFDocument.create();
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i), vp = page.getViewport({ scale }), base = page.getViewport({ scale: 1 });
-      c.width = vp.width; c.height = vp.height; g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
-      await page.render({ canvasContext: g, viewport: vp }).promise;
-      const jpg = await new Promise((r) => c.toBlob(r, "image/jpeg", q));
-      const img = await doc.embedJpg(await jpg.arrayBuffer());
-      doc.addPage([base.width, base.height]).drawImage(img, { x: 0, y: 0, width: base.width, height: base.height });
-    }
-    const out = await doc.save();
-    if (out.length <= TARGET) { toast("Páginas do PDF convertidas em imagem para reduzir o tamanho (o texto deixa de ser selecionável)."); return new Blob([out], { type: "application/pdf" }); }
-  }
-  return null;
-}
-// Compacta assim que os arquivos são escolhidos e guarda o resultado no próprio campo.
+// Ao escolher as imagens, abre um modal com o progresso que bloqueia o sistema até terminar a conversão.
 function watchFiles(input) {
   const info = document.createElement("div"); info.className = "muted"; input.after(info);
   input._files = []; input._n = 0; input._job = Promise.resolve();
   input.addEventListener("change", () => {
     const id = ++input._n, picked = [...input.files];
-    input._files = []; info.textContent = picked.length ? "Preparando arquivos..." : "";
+    input._files = []; info.textContent = "";
+    if (!picked.length) return;
+    if (picked.length > MAX_FILES) { input.value = ""; return toast(`Envie no máximo ${MAX_FILES} imagens`, true); }
+    const m = dialog(`<div class="conv"><div class="spin" aria-hidden="true"></div><h2>Convertendo imagens…</h2><p class="muted">Aguarde até chegar a 100%. O sistema fica bloqueado durante a conversão.</p><div class="pbar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></div><b class="pct">0%</b></div>`, { required: true });
+    const bar = $(".pbar i", m), pct = $(".pct", m), bx = $(".pbar", m);
+    const set = (p) => { const v = Math.round(p * 100); bar.style.width = v + "%"; pct.textContent = v + "%"; bx.setAttribute("aria-valuenow", v); };
     input._job = (async () => {
       try {
-        const files = await readFiles(picked);
+        const files = await readFiles(picked, set);
+        set(1); await new Promise((r) => setTimeout(r, 400));
         if (id !== input._n) return;
         input._files = files;
         info.textContent = "Pronto para enviar: " + files.map((f) => `${f.name} (${Math.ceil((f.data.length * 0.75) / 1024)} KB)`).join(", ");
       } catch (e) {
         if (id !== input._n) return;
         input.value = ""; input._files = []; info.textContent = ""; toast(e.message, true);
-      }
+      } finally { m.remove(); }
     })();
   });
 }
@@ -372,7 +352,7 @@ const views = {
     shell(`<h1>Novo protocolo</h1><form class="panel" id="f"><div class="field"><label for="s">Assunto</label><input id="s" required maxlength="200"></div>
     <div class="field"><label for="d">Conteúdo do documento</label><textarea id="d" maxlength="5000"></textarea></div>
     <div class="field"><label>Setores destinatários</label>${list.length ? `<div class="checks">${list.map((s) => `<label><input type="checkbox" name="sec" value="${s.id}"> ${esc(s.name)}</label>`).join("")}</div>` : `<p class="muted">Cadastre setores antes de enviar.</p>`}</div>
-    <div class="field"><label for="a">Anexos (PDF ou imagem; arquivos acima de ${MAX_MB} MB são compactados automaticamente)</label><input id="a" type="file" multiple accept="application/pdf,image/*"></div>
+    <div class="field"><label for="a">Anexos (somente imagens; convertidas para WebP e compactadas a até 100 KB)</label><input id="a" type="file" multiple accept="image/jpeg,image/png,image/webp"></div>
     <p class="muted">Ao enviar, o protocolo entra na caixa de entrada de cada setor e o recebimento é registrado automaticamente. A visualização só é registrada quando alguém do setor abrir o protocolo.</p>
     <button class="btn">Enviar protocolo</button></form>`, "n");
     watchFiles($("#a"));
@@ -415,7 +395,7 @@ const views = {
     shell(`<p><a class="backbtn" href="${back}" title="Voltar à lista" aria-label="Voltar à lista">${ICON.back}</a></p><h1>${esc(p.protocol_number)} — ${esc(p.subject)}</h1>
     <div class="two"><div><div class="panel"><p><b>Destinatário:</b> ${esc(r.sector_name)} &nbsp; ${chip(r.status)}</p><p class="muted">Enviado ${fmt(r.sent_at)} · Recebido ${fmt(r.received_at)} · Visualizado ${fmt(r.first_viewed_at)} · Respondido ${fmt(r.responded_at)}</p><p style="white-space:pre-wrap">${esc(p.description)}</p>${fileList(orig)}${adm ? `<p><button class="btn sec sm" id="wa">Avisar por WhatsApp</button></p>` : ""}</div>
     <div class="panel"><h2>Comunicação</h2>${d.messages.map((m) => `<div class="msg ${m.role === "adm" ? "adm" : ""}"><small><b>${esc(m.author)}</b> · ${m.role === "adm" ? "Central" : esc(r.sector_name)} · ${fmt(m.created_at)}</small><div style="white-space:pre-wrap">${esc(m.message)}</div>${fileList(d.files.filter((f) => f.message_id === m.id))}</div>`).join("") || `<p class="muted">Nenhuma mensagem ainda.</p>`}
-    <form id="rf"><div class="field"><label for="t">${adm ? "Enviar mensagem ao setor" : "Responder à central"}</label><textarea id="t" maxlength="5000"></textarea></div><div class="field"><input id="rfile" type="file" multiple accept="application/pdf,image/*" aria-label="Anexos"></div><button class="btn">${adm ? "Enviar mensagem" : "Enviar resposta"}</button></form></div></div>
+    <form id="rf"><div class="field"><label for="t">${adm ? "Enviar mensagem ao setor" : "Responder à central"}</label><textarea id="t" maxlength="5000"></textarea></div><div class="field"><input id="rfile" type="file" multiple accept="image/jpeg,image/png,image/webp" aria-label="Anexos"></div><button class="btn">${adm ? "Enviar mensagem" : "Enviar resposta"}</button></form></div></div>
     <div class="panel"><h2>Histórico</h2><ul class="tl">${d.events.map((e) => `<li>${esc(EVENT[e.event_type] || e.event_type)}${e.author ? " · " + esc(e.author) : ""}<br><small class="muted">${fmt(e.created_at)}</small></li>`).join("")}</ul></div></div>`, adm ? "l" : secKey(r.sector_id));
     bindFiles($("main"));
     if ($("#wa")) $("#wa").onclick = guard(() => shareModal(p.id));
