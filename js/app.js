@@ -278,6 +278,33 @@ async function archiveFlow(p) {
   dialog(`<h2>Arquivar anexos de ${esc(label)}</h2><p>${files.length} imagem(ns), cerca de ${mb} MB. O sistema vai baixar as imagens, gerar o ZIP e salvá-lo no seu computador, organizado por setor e protocolo.</p><p class="muted">Nada é apagado antes da sua confirmação. Mantenha esta aba aberta durante o processo.</p>`, { ok: "Iniciar", onOk: () => { setTimeout(run, 50); } });
 }
 
+// ---------- teste temporário: arquivo em BLOB (binário) no D1
+async function blobTest(file, out, btn) {
+  const log = (t) => { out.textContent += t + "\n"; }, C = 1900000, id = crypto.randomUUID(), n = Math.ceil(file.size / C), H = async () => ({ Authorization: "Bearer " + (await auth.currentUser.getIdToken()) });
+  btn.disabled = true; out.textContent = "";
+  const hash = async (buf) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", buf))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  try {
+    log(`Arquivo: ${(file.size / 1048576).toFixed(2)} MB em ${n} pedaço(s) de até 1,9 MB`);
+    let t0 = performance.now();
+    for (let i = 0; i < n; i++) {
+      const r = await fetch(`${API}/api/blobtest/${id}/${i}`, { method: "POST", headers: { ...(await H()), "Content-Type": "application/octet-stream" }, body: file.slice(i * C, (i + 1) * C) });
+      if (!r.ok) throw new Error(`Gravação do pedaço ${i + 1} falhou (HTTP ${r.status}): ${(await r.text()).slice(0, 200)}`);
+      log(`  gravado ${i + 1}/${n}`);
+    }
+    log(`Gravação concluída em ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+    t0 = performance.now(); const parts = []; let kind = "";
+    for (let i = 0; i < n; i++) {
+      const r = await fetch(`${API}/api/blobtest/${id}/${i}`, { headers: await H() });
+      if (!r.ok) throw new Error(`Leitura do pedaço ${i + 1} falhou (HTTP ${r.status}): ${(await r.text()).slice(0, 200)}`);
+      kind = r.headers.get("X-Blob-Type") || "?"; parts.push(await r.arrayBuffer()); log(`  lido ${i + 1}/${n}`);
+    }
+    log(`Leitura concluída em ${((performance.now() - t0) / 1000).toFixed(1)} s (o D1 devolveu o BLOB como: ${kind})`);
+    const back = await new Blob(parts).arrayBuffer(), same = back.byteLength === file.size && (await hash(back)) === (await hash(await file.arrayBuffer()));
+    log(same ? "RESULTADO: OK. Os bytes lidos são idênticos ao arquivo original." : "RESULTADO: FALHOU. O arquivo lido é diferente do original.");
+  } catch (e) { log("RESULTADO: ERRO. " + e.message); }
+  finally { try { await fetch(`${API}/api/blobtest/${id}/clean`, { method: "POST", headers: await H() }); log("Dados do teste apagados."); } catch { log("Não foi possível apagar os dados do teste."); } btn.disabled = false; }
+}
+
 // ---------- estrutura
 const svg = (d) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
 const ICON = {
@@ -432,9 +459,10 @@ const views = {
       <p>Situação: <span class="chip ${active ? "respondido" : ""}">${state}</span></p>
       <p class="muted">${me.role === "adm" ? "Você é avisado quando um setor responde a um protocolo." : "Você é avisado quando chega um protocolo ou uma mensagem da central para o seu setor."} O aviso chega mesmo com o ProtoWeb fechado, desde que o navegador esteja em execução. Vale só para este computador e este navegador. Os contadores nos cards continuam aparecendo.</p>
       ${perm === "denied" ? `<p>O navegador está bloqueando as notificações deste site. Clique no ícone à esquerda do endereço, abra as permissões do site, mude Notificações para Permitir e recarregue a página.</p>` : ""}
-      ${perm === "unsupported" ? "" : `<button class="btn" id="tg">${active ? "Desativar notificações" : "Ativar notificações"}</button>`}</div>${me.role === "adm" ? `<div class="panel"><h2>Consulta pública de protocolos</h2><p class="muted">Link para o cidadão acompanhar o andamento digitando o número do protocolo. Mostra só as datas do andamento, sem assunto nem documentos. A consulta fica disponível por ${esc(me.public_days)} dia(s) após o cadastro do protocolo.</p><div class="field"><input id="plink" readonly value="${esc(location.origin + location.pathname.replace(/[^/]*$/, "") + "consulta.html")}"></div><button class="btn" id="cp">Copiar link</button></div>` : ""}</div>`, "c");
+      ${perm === "unsupported" ? "" : `<button class="btn" id="tg">${active ? "Desativar notificações" : "Ativar notificações"}</button>`}</div>${me.role === "adm" ? `<div class="panel"><h2>Consulta pública de protocolos</h2><p class="muted">Link para o cidadão acompanhar o andamento digitando o número do protocolo. Mostra só as datas do andamento, sem assunto nem documentos. A consulta fica disponível por ${esc(me.public_days)} dia(s) após o cadastro do protocolo.</p><div class="field"><input id="plink" readonly value="${esc(location.origin + location.pathname.replace(/[^/]*$/, "") + "consulta.html")}"></div><button class="btn" id="cp">Copiar link</button></div>` : ""}${me.role === "adm" ? `<div class="panel"><h2>Teste de armazenamento binário (temporário)</h2><p class="muted">Escolha um PDF grande (de 8 a 10 MB). O teste guarda o arquivo em binário no banco, lê de volta, compara com o original e apaga. Não afeta nenhum protocolo.</p><div class="field"><input id="btf" type="file" accept="application/pdf"></div><button class="btn" id="btr">Executar teste</button><pre id="btl" class="btlog" aria-live="polite"></pre></div>` : ""}</div>`, "c");
     maskPhone($("#pp")); $("#sv").onclick = guard(async () => { await saveProfile(); toast("Dados salvos"); route(); });
     if ($("#cp")) $("#cp").onclick = guard(async () => { await navigator.clipboard.writeText($("#plink").value); toast("Link copiado"); });
+    if ($("#btr")) $("#btr").onclick = () => { const f = $("#btf").files[0]; if (!f) return toast("Escolha um PDF primeiro", true); blobTest(f, $("#btl"), $("#btr")); };
     const tg = $("#tg");
     if (tg) tg.onclick = guard(async () => { tg.disabled = true; if (active) await disablePush(); else await enablePush(false); route(); });
   },
