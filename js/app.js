@@ -25,7 +25,9 @@ const EVENT = { criado: "Protocolo criado", enviado: "Enviado pela central", rec
 const two = (d) => (d ? `<span class="d">${new Date(d).toLocaleDateString("pt-BR")}</span><span class="t">${new Date(d).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>` : "—");
 const chip = (s) => `<span class="chip ${s}">${LABEL[s] || s}</span>`;
 
-let me = null, sectors = [], busy = 0;
+let me = null, sectors = [], busy = 0, pvUrl = null;
+const revokePv = () => { if (pvUrl) URL.revokeObjectURL(pvUrl); pvUrl = null; };
+const fmtDay = (d) => (d ? String(d).slice(0, 10).split("-").reverse().join("/") : "—");
 const secKey = (id) => (sectors.length > 1 ? "m" + id : "m"); // item ativo do menu do usuário de setor
 
 // ---------- utilidades
@@ -62,42 +64,57 @@ document.addEventListener("click", (e) => { const m = $("#umenu"); if (m && !m.h
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") { const m = $("#umenu"); if (m) m.hidden = true; } });
 const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
 
-// Anexos: só imagens. Cada uma é convertida para WebP e, se passar de 100 KB, compactada até caber; depois vai em Base64.
-const TARGET = 100 * 1024, MAX_SIDE = 2560, MAX_FILES = 3;
+// Anexos: só PDF. Cada arquivo é compactado em até 35% (fica com ~65% do tamanho) e vai em Base64.
+const MAX_FILES = 3, MAX_BYTES = Math.floor(1.4 * 1048576), KEEP = 0.65, CDN = "https://cdnjs.cloudflare.com/ajax/libs/";
 const tick = () => new Promise((r) => setTimeout(r));
-async function toWebp(file, onStep) {
-  const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
-  const base = Math.min(1, MAX_SIDE / Math.max(bmp.width, bmp.height));
-  const c = document.createElement("canvas"), g = c.getContext("2d");
-  const scales = [1, 0.85, 0.7, 0.55, 0.4, 0.3].map((k) => k * base), quals = [0.85, 0.75, 0.65, 0.55, 0.45, 0.35], max = scales.length * quals.length;
-  let n = 0, best = null;
-  for (const k of scales) {
-    c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
-    g.clearRect(0, 0, c.width, c.height); g.drawImage(bmp, 0, 0, c.width, c.height);
-    for (const q of quals) {
-      const b = await new Promise((r) => c.toBlob(r, "image/webp", q));
-      if (!b || b.type !== "image/webp") throw new Error("Este navegador não consegue converter imagens para WebP. Use o Chrome ou o Edge atualizado.");
-      if (!best || b.size < best.size) best = b;
-      onStep(++n / max); await tick();
-      if (b.size <= TARGET) { bmp.close?.(); return b; }
+const kb = (n) => Math.ceil(n / 1024) + " KB";
+// 1) re-salva o PDF sem mexer no conteúdo (mantém o texto); 2) se não bastar, refaz as páginas como imagens JPEG, só se isso atingir a meta.
+async function compressPdf(file, onStep) {
+  if (!window.PDFLib) await loadScript(CDN + "pdf-lib/1.17.1/pdf-lib.min.js");
+  const buf = await file.arrayBuffer(), goal = Math.floor(file.size * KEEP);
+  let resaved = null, raster = null;
+  try {
+    const out = await (await PDFLib.PDFDocument.load(buf, { ignoreEncryption: true })).save({ useObjectStreams: true });
+    if (out.length < file.size) resaved = new Blob([out], { type: "application/pdf" });
+  } catch { /* segue para a etapa 2 */ }
+  onStep(0.1);
+  if (resaved && resaved.size <= goal) return { blob: resaved, mode: "texto" };
+  if (!window.pdfjsLib) { await loadScript(CDN + "pdf.js/3.11.174/pdf.min.js"); pdfjsLib.GlobalWorkerOptions.workerSrc = CDN + "pdf.js/3.11.174/pdf.worker.min.js"; }
+  const pdf = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
+  const c = document.createElement("canvas"), g = c.getContext("2d"), tries = [[2, 0.75], [1.7, 0.65], [1.4, 0.55], [1.2, 0.5], [1, 0.42]];
+  for (let t = 0; t < tries.length; t++) {
+    const [scale, q] = tries[t], doc = await PDFLib.PDFDocument.create();
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i), vp = page.getViewport({ scale }), base = page.getViewport({ scale: 1 });
+      c.width = vp.width; c.height = vp.height; g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvasContext: g, viewport: vp }).promise;
+      const jpg = await new Promise((r) => c.toBlob(r, "image/jpeg", q)), img = await doc.embedJpg(await jpg.arrayBuffer());
+      doc.addPage([base.width, base.height]).drawImage(img, { x: 0, y: 0, width: base.width, height: base.height });
+      onStep(0.1 + 0.9 * ((t + i / pdf.numPages) / tries.length)); await tick();
     }
+    const out = new Blob([await doc.save()], { type: "application/pdf" });
+    if (!raster || out.size < raster.size) raster = out;
+    if (out.size <= goal) return { blob: out, mode: "imagem" };
   }
-  bmp.close?.();
-  if (best && best.size <= TARGET * 1.4) return best; // quase lá: aceita
-  throw new Error(`Não foi possível reduzir "${file.name}" para cerca de 100 KB. Use uma imagem menor.`);
+  // meta não atingida: prefere manter o texto selecionável; a versão em imagem só entra se for a única que cabe no limite do banco
+  const text = resaved || file;
+  if (text.size > MAX_BYTES && raster && raster.size < text.size && raster.size <= MAX_BYTES) return { blob: raster, mode: "imagem" };
+  return { blob: text, mode: resaved ? "texto" : "original" };
 }
 async function readFiles(list, onProgress) {
   const out = [];
   for (let i = 0; i < list.length; i++) {
-    const f = list[i], step = (p) => onProgress((i + Math.min(p, 0.95)) / list.length);
-    if (!["image/jpeg", "image/png", "image/webp"].includes(f.type)) throw new Error(`"${f.name}": envie apenas imagens (JPG, PNG ou WebP)`);
-    const blob = f.type === "image/webp" && f.size <= TARGET ? f : await toWebp(f, step);
-    out.push({ name: f.name.replace(/\.\w+$/, "") + ".webp", type: "image/webp", data: await toB64(blob) });
+    const f = list[i], step = (p) => onProgress((i + Math.min(p, 0.99)) / list.length);
+    if (f.type !== "application/pdf") throw new Error(`"${f.name}": envie apenas arquivos PDF`);
+    const r = await compressPdf(f, step);
+    if (r.blob.size > MAX_BYTES) throw new Error(`"${f.name}" ficou com ${kb(r.blob.size)} mesmo após compactar. O limite é ${(MAX_BYTES / 1048576).toFixed(1)} MB por arquivo: divida o documento em partes.`);
+    out.push({ name: f.name, type: "application/pdf", data: await toB64(r.blob), orig: f.size, size: r.blob.size, mode: r.mode });
     onProgress((i + 1) / list.length);
   }
   return out;
 }
-// Ao escolher as imagens, abre um modal com o progresso que bloqueia o sistema até terminar a conversão.
+const sizeInfo = (f) => `${f.name} (${kb(f.orig)} → ${kb(f.size)}${f.size < f.orig ? `, −${Math.round((1 - f.size / f.orig) * 100)}%` : ", não foi possível reduzir"}${f.mode === "imagem" ? ", páginas convertidas em imagem" : ""})`;
+// Ao escolher os PDFs, abre um modal com o progresso que bloqueia o sistema até terminar a compactação.
 function watchFiles(input) {
   const info = document.createElement("div"); info.className = "muted"; input.after(info);
   input._files = []; input._n = 0; input._job = Promise.resolve();
@@ -105,8 +122,8 @@ function watchFiles(input) {
     const id = ++input._n, picked = [...input.files];
     input._files = []; info.textContent = "";
     if (!picked.length) return;
-    if (picked.length > MAX_FILES) { input.value = ""; return toast(`Envie no máximo ${MAX_FILES} imagens`, true); }
-    const m = dialog(`<div class="conv"><div class="spin" aria-hidden="true"></div><h2>Convertendo imagens…</h2><p class="muted">Aguarde até chegar a 100%. O sistema fica bloqueado durante a conversão.</p><div class="pbar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></div><b class="pct">0%</b></div>`, { required: true });
+    if (picked.length > MAX_FILES) { input.value = ""; return toast(`Envie no máximo ${MAX_FILES} arquivos`, true); }
+    const m = dialog(`<div class="conv"><div class="spin" aria-hidden="true"></div><h2>Compactando PDF…</h2><p class="muted">Aguarde até chegar a 100%. O sistema fica bloqueado durante a compactação.</p><div class="pbar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></div><b class="pct">0%</b></div>`, { required: true });
     const bar = $(".pbar i", m), pct = $(".pct", m), bx = $(".pbar", m);
     const set = (p) => { const v = Math.round(p * 100); bar.style.width = v + "%"; pct.textContent = v + "%"; bx.setAttribute("aria-valuenow", v); };
     input._job = (async () => {
@@ -115,7 +132,7 @@ function watchFiles(input) {
         set(1); await new Promise((r) => setTimeout(r, 400));
         if (id !== input._n) return;
         input._files = files;
-        info.textContent = "Pronto para enviar: " + files.map((f) => `${f.name} (${Math.ceil((f.data.length * 0.75) / 1024)} KB)`).join(", ");
+        info.textContent = "Pronto para enviar: " + files.map(sizeInfo).join("; ");
       } catch (e) {
         if (id !== input._n) return;
         input.value = ""; input._files = []; info.textContent = ""; toast(e.message, true);
@@ -256,6 +273,8 @@ const ICON = {
   s: svg('<path d="M4 21V7l8-4 8 4v14"/><path d="M9 21v-6h6v6M9 10h.01M15 10h.01"/>'),
   u: svg('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.2a6.5 6.5 0 0 1 3.5 5.8"/>'),
   arch: svg('<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4"/>'),
+  h: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+  ok: svg('<path d="M5 12l5 5L20 7"/>'),
   back: svg('<path d="M19 12H5M12 19l-7-7 7-7"/>'),
   out: svg('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>'),
   user: '<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="#5d5a66"/><circle cx="12" cy="9.5" r="4" fill="#e9e6f0"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0a12 12 0 0 1-15 0z" fill="#e9e6f0"/></svg>',
@@ -276,8 +295,8 @@ function shell(inner, active) {
   $("#app").innerHTML = `<div class="shell" data-sig="${sig}"><header class="top"><span class="brandbar"><img class="logo" src="logo.svg" alt="Brasão de Careiro"><span class="org">Prefeitura Municipal de Careiro</span><span class="tagwrap">${tag}</span></span><span class="who"><button class="uchip" id="um" aria-haspopup="true" aria-expanded="false" title="${esc(me.name)} (${esc(me.email)})">${avatar(34)}<b>${esc(String(me.name || me.email).split(" ")[0])}</b></button>
       <div class="umenu" id="umenu" hidden><div class="uinfo">${avatar(64)}<b>${esc(me.name)}</b><span class="muted">${esc(me.email)}</span></div><button class="btn sec" id="out">${ICON.out}<span>Sair</span></button></div></span></header>
     ${adm ? '<div class="abanner" id="abanner" hidden></div>' : ""}<div class="body"><aside class="side"><nav>
-    ${adm ? nav("#/central", "Painel", "p") + nav("#/central/protocolos", "Protocolos", "l", "nb-prot") + nav("#/central/novo", "Novo protocolo", "n") + nav("#/central/setores", "Setores", "s") + nav("#/central/usuarios", "Usuários", "u") : ""}
-    ${adm ? "" : sectors.length > 1 ? sectors.map((x) => nav("#/setor/" + x.id, esc(x.name), "m" + x.id, "nb-s" + x.id)).join("") : nav("#/setores", "Caixa de entrada", "m", "nb-set")}${nav("#/config", "Configurações", "c")}</nav></aside>
+    ${adm ? nav("#/central", "Painel", "p") + nav("#/central/protocolos", "Protocolos", "l", "nb-prot") + nav("#/historico", "Histórico", "h") + nav("#/central/novo", "Novo protocolo", "n") + nav("#/central/setores", "Setores", "s") + nav("#/central/usuarios", "Usuários", "u") : ""}
+    ${adm ? "" : sectors.length > 1 ? sectors.map((x) => nav("#/setor/" + x.id, esc(x.name), "m" + x.id, "nb-s" + x.id)).join("") : nav("#/setores", "Caixa de entrada", "m", "nb-set")}${adm ? "" : nav("#/historico", "Histórico", "h")}${nav("#/config", "Configurações", "c")}</nav></aside>
     <main class="fade">${inner}</main></div></div>`;
   $("#out").onclick = logout;
   const um = $("#um"), menu = $("#umenu");
@@ -397,8 +416,9 @@ const views = {
       <p>Situação: <span class="chip ${active ? "respondido" : ""}">${state}</span></p>
       <p class="muted">${me.role === "adm" ? "Você é avisado quando um setor responde a um protocolo." : "Você é avisado quando chega um protocolo ou uma mensagem da central para o seu setor."} O aviso chega mesmo com o ProtoWeb fechado, desde que o navegador esteja em execução. Vale só para este computador e este navegador. Os contadores nos cards continuam aparecendo.</p>
       ${perm === "denied" ? `<p>O navegador está bloqueando as notificações deste site. Clique no ícone à esquerda do endereço, abra as permissões do site, mude Notificações para Permitir e recarregue a página.</p>` : ""}
-      ${perm === "unsupported" ? "" : `<button class="btn" id="tg">${active ? "Desativar notificações" : "Ativar notificações"}</button>`}</div></div>`, "c");
+      ${perm === "unsupported" ? "" : `<button class="btn" id="tg">${active ? "Desativar notificações" : "Ativar notificações"}</button>`}</div>${me.role === "adm" ? `<div class="panel"><h2>Consulta pública de protocolos</h2><p class="muted">Link para o cidadão acompanhar o andamento digitando o número do protocolo. Mostra só as datas do andamento, sem assunto nem documentos. A consulta fica disponível por ${esc(me.public_days)} dia(s) após o cadastro do protocolo.</p><div class="field"><input id="plink" readonly value="${esc(location.origin + location.pathname.replace(/[^/]*$/, "") + "consulta.html")}"></div><button class="btn" id="cp">Copiar link</button></div>` : ""}</div>`, "c");
     maskPhone($("#pp")); $("#sv").onclick = guard(async () => { await saveProfile(); toast("Dados salvos"); route(); });
+    if ($("#cp")) $("#cp").onclick = guard(async () => { await navigator.clipboard.writeText($("#plink").value); toast("Link copiado"); });
     const tg = $("#tg");
     if (tg) tg.onclick = guard(async () => { tg.disabled = true; if (active) await disablePush(); else await enablePush(false); route(); });
   },
@@ -416,13 +436,62 @@ const views = {
     shell(`<h1>Painel central</h1><div class="kpis">${k(d.total, "Protocolos")}${k(d.enviados, "Enviados")}${k(d.recebidos, "Recebidos")}${k(d.visualizados, "Visualizados")}${k(d.respondidos, "Respondidos")}${k(d.pendentes, "Pendentes de resposta", "pend")}</div>
     <div class="panel"><h2>Protocolos por setor</h2><div class="legend"><span><i class="seg ok"></i>Respondidos</span><span><i class="seg pend"></i>Pendentes</span></div>${bars}</div>`, "p");
   },
+  async historico(rid) {
+    const adm = me.role === "adm";
+    if (!rid) {
+      let sid = null;
+      if (!adm) {
+        if (!sectors.length) return shell(`<h1>Histórico</h1><div class="panel empty">Você ainda não tem acesso a nenhum setor. Peça à administração para liberar.</div>`, "h");
+        const last = JSON.parse(sessionStorage.getItem("sector") || "null");
+        sid = (sectors.find((x) => x.id == last?.id) || sectors[0]).id;
+      }
+      return listView(sid, "Histórico", "h", true);
+    }
+    const d = await api("/api/recipients/" + rid), { protocol: p, recipient: r } = d, orig = d.files.filter((f) => !f.message_id), sib = d.siblings || [];
+    const resp = d.messages.filter((m) => m.role !== "adm");
+    const steps = [
+      { t: "Entrada do protocolo", done: true, when: fmtDay(p.entry_date), wait: "" },
+      { t: `Encaminhado a ${esc(r.sector_name)}`, done: !!r.sent_at, when: fmt(r.sent_at), wait: "Ainda não encaminhado" },
+      { t: "Documento visualizado", done: !!r.first_viewed_at, when: fmt(r.first_viewed_at), wait: "Aguardando visualização pelo setor" },
+      { t: "Resposta do documento", done: !!r.responded_at, when: fmt(r.responded_at), wait: "Aguardando resposta do setor",
+        extra: resp.map((m) => `<div class="msg"><small><b>${esc(m.author)}</b> · ${fmt(m.created_at)}</small><div style="white-space:pre-wrap">${esc(m.message)}</div>${fileList(d.files.filter((f) => f.message_id === m.id))}</div>`).join("") },
+    ];
+    const cur = steps.findIndex((x) => !x.done);
+    shell(`<div class="hhead"><a class="backbtn" href="#/historico" title="Voltar ao histórico" aria-label="Voltar ao histórico">${ICON.back}</a><div><h1>${esc(p.protocol_number)} — ${esc(p.subject)}</h1>
+      <p class="muted">${sib.length > 1 ? `Destinatário: ${sib.map((x) => `<a class="chipl ${x.rid == rid ? "on" : ""}" href="#/historico/${x.rid}">${esc(x.name)}</a>`).join("")}` : `Destinatário: ${esc(r.sector_name)}`} &nbsp; ${chip(r.status)}</p></div></div>
+      <div class="hsplit" id="hs"><section class="hprev panel">${orig.length > 1 ? `<div class="ptabs">${orig.map((f, i) => `<button class="ptab ${i ? "" : "on"}" data-pf="${f.id}">${esc(f.file_name)}</button>`).join("")}</div>` : ""}<div id="pv" class="pv"></div></section>
+      <div class="hbar" id="hb" role="separator" aria-orientation="vertical" aria-label="Redimensionar" tabindex="0"></div>
+      <section class="htl panel"><h2>Andamento do protocolo</h2><ol class="stp">${steps.map((x, i) => `<li class="${x.done ? "done" : i === cur ? "cur" : "wait"}"><span class="dot">${x.done ? ICON.ok : ""}</span><div><b>${x.t}</b><div class="when">${x.done ? x.when : x.wait}</div>${x.done && x.extra ? x.extra : ""}</div></li>`).join("")}</ol></section></div>`, "h");
+    bindFiles($("main"));
+    const pv = $("#pv"), hs = $("#hs"), hb = $("#hb");
+    const show = guard(async (f) => {
+      revokePv();
+      if (!f) { pv.innerHTML = `<p class="empty">Nenhum documento anexado a este protocolo.</p>`; return; }
+      if (f.archived_at) { pv.innerHTML = `<p class="empty">Documento removido no arquivamento mensal.</p>`; return; }
+      pv.innerHTML = `<p class="empty">Carregando documento…</p>`;
+      const blob = await api("/api/files/" + f.id, { blob: true });
+      pvUrl = URL.createObjectURL(blob);
+      pv.innerHTML = f.mime_type === "application/pdf" ? `<iframe src="${pvUrl}" title="${esc(f.file_name)}"></iframe>` : `<img src="${pvUrl}" alt="${esc(f.file_name)}">`;
+    });
+    document.querySelectorAll("[data-pf]").forEach((b) => (b.onclick = () => { document.querySelectorAll("[data-pf]").forEach((x) => x.classList.toggle("on", x === b)); show(orig.find((f) => f.id == b.dataset.pf)); }));
+    const setW = (pc) => hs.style.setProperty("--lw", Math.min(70, Math.max(30, pc)) + "%");
+    hb.onpointerdown = (e) => {
+      hb.setPointerCapture(e.pointerId); hs.classList.add("drag");
+      const mv = (ev) => { const b = hs.getBoundingClientRect(); setW(((ev.clientX - b.left) / b.width) * 100); };
+      const up = () => { hs.classList.remove("drag"); hb.removeEventListener("pointermove", mv); hb.removeEventListener("pointerup", up); };
+      hb.addEventListener("pointermove", mv); hb.addEventListener("pointerup", up);
+    };
+    hb.onkeydown = (e) => { if (e.key === "ArrowLeft" || e.key === "ArrowRight") { const cw = parseFloat(getComputedStyle(hs).getPropertyValue("--lw")) || 55; setW(cw + (e.key === "ArrowLeft" ? -5 : 5)); e.preventDefault(); } };
+    show(orig[0]);
+    poll(); // abrir conclui o aviso de "novo"
+  },
   async protocolos() { await listView(null, "Protocolos", "l"); },
   async novo() {
-    const list = (await api("/api/sectors")).filter((s) => s.active);
-    shell(`<h1>Novo protocolo</h1><form class="panel" id="f"><div class="field"><label for="s">Assunto</label><input id="s" required maxlength="200"></div>
+    const list = (await api("/api/sectors")).filter((s) => s.active), today = new Date(Date.now() - 4 * 3600e3).toISOString().slice(0, 10);
+    shell(`<h1>Novo protocolo</h1><form class="panel" id="f"><div class="frow"><div class="field"><label for="pnum">Número do protocolo</label><input id="pnum" required maxlength="40" placeholder="Ex.: 123/2026" autocomplete="off"></div><div class="field"><label for="pdt">Data do protocolo</label><input id="pdt" type="date" required value="${today}"></div></div><div class="field"><label for="s">Assunto</label><input id="s" required maxlength="200"></div>
     <div class="field"><label for="d">Conteúdo do documento</label><textarea id="d" maxlength="5000"></textarea></div>
     <div class="field"><label>Setores destinatários</label>${list.length ? `<div class="checks">${list.map((s) => `<label><input type="checkbox" name="sec" value="${s.id}"> ${esc(s.name)}</label>`).join("")}</div>` : `<p class="muted">Cadastre setores antes de enviar.</p>`}</div>
-    <div class="field"><label for="a">Anexos (somente imagens; convertidas para WebP e compactadas a até 100 KB)</label><input id="a" type="file" multiple accept="image/jpeg,image/png,image/webp"></div>
+    <div class="field"><label for="a">Anexos (somente PDF; compactados em até 35% antes do envio)</label><input id="a" type="file" multiple accept="application/pdf"></div>
     <p class="muted">Ao enviar, o protocolo entra na caixa de entrada de cada setor e o recebimento é registrado automaticamente. A visualização só é registrada quando alguém do setor abrir o protocolo.</p>
     <button class="btn">Enviar protocolo</button></form>`, "n");
     watchFiles($("#a"));
@@ -432,7 +501,7 @@ const views = {
       if (!ids.length) return toast("Selecione ao menos um setor", true);
       dialog(`<h2>Confirmar envio</h2><p>Enviar o protocolo para ${ids.length} setor(es)? Essa ação não pode ser desfeita.</p>`, { ok: "Enviar", onOk: async () => {
         const files = await getFiles($("#a"));
-        const r = await api("/api/protocols", { method: "POST", body: { subject: $("#s").value, description: $("#d").value, sector_ids: ids, files } });
+        const r = await api("/api/protocols", { method: "POST", body: { protocol_number: $("#pnum").value, entry_date: $("#pdt").value, subject: $("#s").value, description: $("#d").value, sector_ids: ids, files } });
         toast("Protocolo enviado: " + r.protocol_number); location.hash = "#/central/protocolos";
         shareModal(r.id).catch((e) => toast("Protocolo enviado, mas não foi possível preparar o WhatsApp: " + e.message, true));
       } });
@@ -465,7 +534,7 @@ const views = {
     shell(`<p><a class="backbtn" href="${back}" title="Voltar à lista" aria-label="Voltar à lista">${ICON.back}</a></p><h1>${esc(p.protocol_number)} — ${esc(p.subject)}</h1>
     <div class="two"><div><div class="panel"><p><b>Destinatário:</b> ${esc(r.sector_name)} &nbsp; ${chip(r.status)}</p><p class="muted">Enviado ${fmt(r.sent_at)} · Recebido ${fmt(r.received_at)} · Visualizado ${fmt(r.first_viewed_at)} · Respondido ${fmt(r.responded_at)}</p><p style="white-space:pre-wrap">${esc(p.description)}</p>${fileList(orig)}${adm ? `<p><button class="btn sec sm" id="wa">Avisar por WhatsApp</button></p>` : ""}</div>
     <div class="panel"><h2>Comunicação</h2>${d.messages.map((m) => `<div class="msg ${m.role === "adm" ? "adm" : ""}"><small><b>${esc(m.author)}</b> · ${m.role === "adm" ? "Central" : esc(r.sector_name)} · ${fmt(m.created_at)}</small><div style="white-space:pre-wrap">${esc(m.message)}</div>${fileList(d.files.filter((f) => f.message_id === m.id))}</div>`).join("") || `<p class="muted">Nenhuma mensagem ainda.</p>`}
-    <form id="rf"><div class="field"><label for="t">${adm ? "Enviar mensagem ao setor" : "Responder à central"}</label><textarea id="t" maxlength="5000"></textarea></div><div class="field"><input id="rfile" type="file" multiple accept="image/jpeg,image/png,image/webp" aria-label="Anexos"></div><button class="btn">${adm ? "Enviar mensagem" : "Enviar resposta"}</button></form></div></div>
+    <form id="rf"><div class="field"><label for="t">${adm ? "Enviar mensagem ao setor" : "Responder à central"}</label><textarea id="t" maxlength="5000"></textarea></div><div class="field"><input id="rfile" type="file" multiple accept="application/pdf" aria-label="Anexos"></div><button class="btn">${adm ? "Enviar mensagem" : "Enviar resposta"}</button></form></div></div>
     <div class="panel"><h2>Histórico</h2><ul class="tl">${d.events.map((e) => `<li>${esc(EVENT[e.event_type] || e.event_type)}${e.author ? " · " + esc(e.author) : ""}<br><small class="muted">${fmt(e.created_at)}</small></li>`).join("")}</ul></div></div>`, adm ? "l" : secKey(r.sector_id));
     bindFiles($("main"));
     if ($("#wa")) $("#wa").onclick = guard(() => shareModal(p.id));
@@ -480,7 +549,7 @@ const views = {
   },
 };
 
-async function listView(sid, title, active) {
+async function listView(sid, title, active, hist = false) {
   const adm = me.role === "adm";
   if (adm && !sectors.length) sectors = (await api("/api/sectors")).filter((s) => s.active);
   shell(`<h1>${title}</h1><form class="panel filters ${adm ? "c" : ""}" id="ff"><div><label for="q">Número ou assunto</label><input id="q"></div>
@@ -492,7 +561,7 @@ async function listView(sid, title, active) {
     const s = sid || ($("#sc") && $("#sc").value); if (s) q.set("sector_id", s);
     const { rows, total, pages, page: cur } = await api("/api/protocols?" + q);
     const pager = total > 50 ? `<div class="pager"><button class="btn sec sm" data-pg="${cur - 1}" ${cur <= 1 ? "disabled" : ""}>Anterior</button><span>Página ${cur} de ${pages} · ${total} protocolos</span><button class="btn sec sm" data-pg="${cur + 1}" ${cur >= pages ? "disabled" : ""}>Próxima</button></div>` : "";
-    $("#res").innerHTML = `<div class="wrap"><table><tr><th>Número</th><th>Assunto</th><th>${adm ? "Destinatário" : "Origem"}</th><th>Enviado</th><th>Recebido</th><th>Visualização</th><th>Resposta</th><th></th></tr>${rows.map((r) => `<tr class="${newLabel(r) ? "new" : ""}"><td class="num">${esc(r.protocol_number)}${newLabel(r) ? `<br><span class="newb">${newLabel(r)}</span>` : ""}</td><td class="subj">${esc(r.subject)}</td><td>${adm ? esc(r.sector) : "Central"}</td><td>${two(r.sent_at)}</td><td>${two(r.received_at)}</td><td><div class="st">${r.first_viewed_at ? chip("visualizado") + `<span class="t">${fmt(r.first_viewed_at)}</span>` : `<span class="chip">Não visualizado</span>`}</div></td><td>${r.responded_at ? chip("respondido") : `<span class="chip">Sem resposta</span>`}</td><td class="nw"><a class="btn sec sm" style="text-decoration:none" href="#/p/${r.rid}">Abrir</a></td></tr>`).join("") || `<tr><td colspan="8" class="empty">Nenhum protocolo encontrado.</td></tr>`}</table></div>${pager}`;
+    $("#res").innerHTML = `<div class="wrap"><table><tr><th>Número</th><th>Assunto</th><th>${adm ? "Destinatário" : "Origem"}</th><th>Enviado</th><th>Recebido</th><th>Visualização</th><th>Resposta</th><th></th></tr>${rows.map((r) => `<tr class="${newLabel(r) ? "new" : ""}"><td class="num">${esc(r.protocol_number)}${newLabel(r) ? `<br><span class="newb">${newLabel(r)}</span>` : ""}</td><td class="subj">${esc(r.subject)}</td><td>${adm ? esc(r.sector) : "Central"}</td><td>${two(r.sent_at)}</td><td>${two(r.received_at)}</td><td><div class="st">${r.first_viewed_at ? chip("visualizado") + `<span class="t">${fmt(r.first_viewed_at)}</span>` : `<span class="chip">Não visualizado</span>`}</div></td><td>${r.responded_at ? chip("respondido") : `<span class="chip">Sem resposta</span>`}</td><td class="nw"><a class="btn sec sm" style="text-decoration:none" href="#/${hist ? "historico" : "p"}/${r.rid}">${hist ? "Ver histórico" : "Abrir"}</a></td></tr>`).join("") || `<tr><td colspan="8" class="empty">Nenhum protocolo encontrado.</td></tr>`}</table></div>${pager}`;
     document.querySelectorAll("[data-pg]").forEach((b) => (b.onclick = () => { load(+b.dataset.pg); window.scrollTo({ top: 0 }); }));
   });
   $("#ff").onsubmit = (e) => { e.preventDefault(); load(1); };
@@ -519,6 +588,7 @@ async function route() {
 // "protocolos" e "novo" ficam em #/central/...; mapeia para as telas acima
 views["central-protocolos"] = views.protocolos; views["central-novo"] = views.novo;
 addEventListener("hashchange", route);
+addEventListener("hashchange", revokePv);
 
 onAuthStateChanged(auth, async (user) => {
   if (!user) { me = null; clearInterval(timer); sessionStorage.clear(); return loginView(); }
