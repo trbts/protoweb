@@ -39,12 +39,22 @@ function toast(msg, err) {
 async function api(path, { method = "GET", body, blob, quiet } = {}) {
   if (!quiet) { busy++; $("#bar").hidden = false; }
   try {
-    const token = await auth.currentUser.getIdToken();
-    const r = await fetch(API + path, { method, headers: { Authorization: "Bearer " + token, ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
-    if (blob && r.ok) { // o Worker devolve o arquivo em Base64 (texto); converte aqui, no navegador
-      const bin = atob(await r.text()), a = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
-      return new Blob([a], { type: r.headers.get("X-File-Type") || "application/octet-stream" });
+    const token = await auth.currentUser.getIdToken(), raw = body instanceof Blob, auth_ = { Authorization: "Bearer " + token };
+    const r = await fetch(API + path, { method, headers: { ...auth_, ...(body ? { "Content-Type": raw ? "application/octet-stream" : "application/json" } : {}) }, body: raw ? body : body ? JSON.stringify(body) : undefined });
+    if (blob && r.ok) {
+      const type = r.headers.get("X-File-Type") || "application/octet-stream", parts = Number(r.headers.get("X-Parts")) || 0;
+      if (!parts) { // arquivo antigo: o Worker devolve Base64 (texto)
+        const bin = atob(await r.text()), a = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+        return new Blob([a], { type });
+      }
+      const bufs = [await r.arrayBuffer()]; // arquivo novo: binário em pedaços, um por requisição
+      for (let i = 1; i < parts; i++) {
+        const rr = await fetch(API + path + "?part=" + i, { headers: auth_ });
+        if (!rr.ok) throw new Error((await rr.json().catch(() => ({}))).error || "Erro " + rr.status);
+        bufs.push(await rr.arrayBuffer());
+      }
+      return new Blob(bufs, { type });
     }
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || "Erro " + r.status);
@@ -69,7 +79,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") { const m 
 const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
 
 // Anexos: só PDF. Cada arquivo é compactado em até 35% (fica com ~65% do tamanho) e vai em Base64.
-const MAX_FILES = 3, MAX_BYTES = 10 * 1048576, CHUNK = 1048575, KEEP = 0.65, CDN = "https://cdnjs.cloudflare.com/ajax/libs/";
+const MAX_FILES = 3, MAX_BYTES = 10 * 1048576, CHUNK = 1900000, KEEP = 0.65, CDN = "https://cdnjs.cloudflare.com/ajax/libs/";
 const tick = () => new Promise((r) => setTimeout(r));
 const kb = (n) => Math.ceil(n / 1024) + " KB";
 // 1) re-salva o PDF sem mexer no conteúdo (mantém o texto); 2) se não bastar, refaz as páginas como imagens JPEG, só se isso atingir a meta.
@@ -105,11 +115,11 @@ async function compressPdf(file, onStep) {
   if (text.size > MAX_BYTES && raster && raster.size < text.size && raster.size <= MAX_BYTES) return { blob: raster, mode: "imagem" };
   return { blob: text, mode: resaved ? "texto" : "original" };
 }
-// Envia o PDF em pedaços de ~1 MB (múltiplo de 3 bytes, para o Base64 emendar sem erro). Cada pedaço tem uma nova tentativa se falhar.
+// Envia o PDF em pedaços binários de até 1,9 MB (sem Base64). Cada pedaço tem uma nova tentativa se falhar.
 async function uploadBlob(blob, onProg) {
   const id = crypto.randomUUID(), n = Math.max(1, Math.ceil(blob.size / CHUNK));
   for (let i = 0; i < n; i++) {
-    const body = { data: await toB64(blob.slice(i * CHUNK, (i + 1) * CHUNK)) };
+    const body = blob.slice(i * CHUNK, (i + 1) * CHUNK);
     try { await api(`/api/uploads/${id}/${i}`, { method: "POST", body, quiet: true }); }
     catch { await tick(); await api(`/api/uploads/${id}/${i}`, { method: "POST", body, quiet: true }); }
     onProg((i + 1) / n);
@@ -278,33 +288,6 @@ async function archiveFlow(p) {
   dialog(`<h2>Arquivar anexos de ${esc(label)}</h2><p>${files.length} imagem(ns), cerca de ${mb} MB. O sistema vai baixar as imagens, gerar o ZIP e salvá-lo no seu computador, organizado por setor e protocolo.</p><p class="muted">Nada é apagado antes da sua confirmação. Mantenha esta aba aberta durante o processo.</p>`, { ok: "Iniciar", onOk: () => { setTimeout(run, 50); } });
 }
 
-// ---------- teste temporário: arquivo em BLOB (binário) no D1
-async function blobTest(file, out, btn) {
-  const log = (t) => { out.textContent += t + "\n"; }, C = 1900000, id = crypto.randomUUID(), n = Math.ceil(file.size / C), H = async () => ({ Authorization: "Bearer " + (await auth.currentUser.getIdToken()) });
-  btn.disabled = true; out.textContent = "";
-  const hash = async (buf) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", buf))].map((b) => b.toString(16).padStart(2, "0")).join("");
-  try {
-    log(`Arquivo: ${(file.size / 1048576).toFixed(2)} MB em ${n} pedaço(s) de até 1,9 MB`);
-    let t0 = performance.now();
-    for (let i = 0; i < n; i++) {
-      const r = await fetch(`${API}/api/blobtest/${id}/${i}`, { method: "POST", headers: { ...(await H()), "Content-Type": "application/octet-stream" }, body: file.slice(i * C, (i + 1) * C) });
-      if (!r.ok) throw new Error(`Gravação do pedaço ${i + 1} falhou (HTTP ${r.status}): ${(await r.text()).slice(0, 200)}`);
-      log(`  gravado ${i + 1}/${n}`);
-    }
-    log(`Gravação concluída em ${((performance.now() - t0) / 1000).toFixed(1)} s`);
-    t0 = performance.now(); const parts = []; let kind = "";
-    for (let i = 0; i < n; i++) {
-      const r = await fetch(`${API}/api/blobtest/${id}/${i}`, { headers: await H() });
-      if (!r.ok) throw new Error(`Leitura do pedaço ${i + 1} falhou (HTTP ${r.status}): ${(await r.text()).slice(0, 200)}`);
-      kind = r.headers.get("X-Blob-Type") || "?"; parts.push(await r.arrayBuffer()); log(`  lido ${i + 1}/${n}`);
-    }
-    log(`Leitura concluída em ${((performance.now() - t0) / 1000).toFixed(1)} s (o D1 devolveu o BLOB como: ${kind})`);
-    const back = await new Blob(parts).arrayBuffer(), same = back.byteLength === file.size && (await hash(back)) === (await hash(await file.arrayBuffer()));
-    log(same ? "RESULTADO: OK. Os bytes lidos são idênticos ao arquivo original." : "RESULTADO: FALHOU. O arquivo lido é diferente do original.");
-  } catch (e) { log("RESULTADO: ERRO. " + e.message); }
-  finally { try { await fetch(`${API}/api/blobtest/${id}/clean`, { method: "POST", headers: await H() }); log("Dados do teste apagados."); } catch { log("Não foi possível apagar os dados do teste."); } btn.disabled = false; }
-}
-
 // ---------- estrutura
 const svg = (d) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
 const ICON = {
@@ -459,10 +442,9 @@ const views = {
       <p>Situação: <span class="chip ${active ? "respondido" : ""}">${state}</span></p>
       <p class="muted">${me.role === "adm" ? "Você é avisado quando um setor responde a um protocolo." : "Você é avisado quando chega um protocolo ou uma mensagem da central para o seu setor."} O aviso chega mesmo com o ProtoWeb fechado, desde que o navegador esteja em execução. Vale só para este computador e este navegador. Os contadores nos cards continuam aparecendo.</p>
       ${perm === "denied" ? `<p>O navegador está bloqueando as notificações deste site. Clique no ícone à esquerda do endereço, abra as permissões do site, mude Notificações para Permitir e recarregue a página.</p>` : ""}
-      ${perm === "unsupported" ? "" : `<button class="btn" id="tg">${active ? "Desativar notificações" : "Ativar notificações"}</button>`}</div>${me.role === "adm" ? `<div class="panel"><h2>Consulta pública de protocolos</h2><p class="muted">Link para o cidadão acompanhar o andamento digitando o número do protocolo. Mostra só as datas do andamento, sem assunto nem documentos. A consulta fica disponível por ${esc(me.public_days)} dia(s) após o cadastro do protocolo.</p><div class="field"><input id="plink" readonly value="${esc(location.origin + location.pathname.replace(/[^/]*$/, "") + "consulta.html")}"></div><button class="btn" id="cp">Copiar link</button></div>` : ""}${me.role === "adm" ? `<div class="panel"><h2>Teste de armazenamento binário (temporário)</h2><p class="muted">Escolha um PDF grande (de 8 a 10 MB). O teste guarda o arquivo em binário no banco, lê de volta, compara com o original e apaga. Não afeta nenhum protocolo.</p><div class="field"><input id="btf" type="file" accept="application/pdf"></div><button class="btn" id="btr">Executar teste</button><pre id="btl" class="btlog" aria-live="polite"></pre></div>` : ""}</div>`, "c");
+      ${perm === "unsupported" ? "" : `<button class="btn" id="tg">${active ? "Desativar notificações" : "Ativar notificações"}</button>`}</div>${me.role === "adm" ? `<div class="panel"><h2>Consulta pública de protocolos</h2><p class="muted">Link para o cidadão acompanhar o andamento digitando o número do protocolo. Mostra só as datas do andamento, sem assunto nem documentos. A consulta fica disponível por ${esc(me.public_days)} dia(s) após o cadastro do protocolo.</p><div class="field"><input id="plink" readonly value="${esc(location.origin + location.pathname.replace(/[^/]*$/, "") + "consulta.html")}"></div><button class="btn" id="cp">Copiar link</button></div>` : ""}</div>`, "c");
     maskPhone($("#pp")); $("#sv").onclick = guard(async () => { await saveProfile(); toast("Dados salvos"); route(); });
     if ($("#cp")) $("#cp").onclick = guard(async () => { await navigator.clipboard.writeText($("#plink").value); toast("Link copiado"); });
-    if ($("#btr")) $("#btr").onclick = () => { const f = $("#btf").files[0]; if (!f) return toast("Escolha um PDF primeiro", true); blobTest(f, $("#btl"), $("#btr")); };
     const tg = $("#tg");
     if (tg) tg.onclick = guard(async () => { tg.disabled = true; if (active) await disablePush(); else await enablePush(false); route(); });
   },
