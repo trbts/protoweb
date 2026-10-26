@@ -41,7 +41,11 @@ async function api(path, { method = "GET", body, blob, quiet } = {}) {
   try {
     const token = await auth.currentUser.getIdToken();
     const r = await fetch(API + path, { method, headers: { Authorization: "Bearer " + token, ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
-    if (blob && r.ok) return await r.blob();
+    if (blob && r.ok) { // o Worker devolve o arquivo em Base64 (texto); converte aqui, no navegador
+      const bin = atob(await r.text()), a = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+      return new Blob([a], { type: r.headers.get("X-File-Type") || "application/octet-stream" });
+    }
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || "Erro " + r.status);
     return j;
@@ -65,7 +69,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") { const m 
 const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
 
 // Anexos: só PDF. Cada arquivo é compactado em até 35% (fica com ~65% do tamanho) e vai em Base64.
-const MAX_FILES = 3, MAX_BYTES = Math.floor(1.4 * 1048576), KEEP = 0.65, CDN = "https://cdnjs.cloudflare.com/ajax/libs/";
+const MAX_FILES = 3, MAX_BYTES = 10 * 1048576, CHUNK = 1048575, KEEP = 0.65, CDN = "https://cdnjs.cloudflare.com/ajax/libs/";
 const tick = () => new Promise((r) => setTimeout(r));
 const kb = (n) => Math.ceil(n / 1024) + " KB";
 // 1) re-salva o PDF sem mexer no conteúdo (mantém o texto); 2) se não bastar, refaz as páginas como imagens JPEG, só se isso atingir a meta.
@@ -101,15 +105,27 @@ async function compressPdf(file, onStep) {
   if (text.size > MAX_BYTES && raster && raster.size < text.size && raster.size <= MAX_BYTES) return { blob: raster, mode: "imagem" };
   return { blob: text, mode: resaved ? "texto" : "original" };
 }
+// Envia o PDF em pedaços de ~1 MB (múltiplo de 3 bytes, para o Base64 emendar sem erro). Cada pedaço tem uma nova tentativa se falhar.
+async function uploadBlob(blob, onProg) {
+  const id = crypto.randomUUID(), n = Math.max(1, Math.ceil(blob.size / CHUNK));
+  for (let i = 0; i < n; i++) {
+    const body = { data: await toB64(blob.slice(i * CHUNK, (i + 1) * CHUNK)) };
+    try { await api(`/api/uploads/${id}/${i}`, { method: "POST", body, quiet: true }); }
+    catch { await tick(); await api(`/api/uploads/${id}/${i}`, { method: "POST", body, quiet: true }); }
+    onProg((i + 1) / n);
+  }
+  return { upload_id: id, chunks: n };
+}
 async function readFiles(list, onProgress) {
   const out = [];
   for (let i = 0; i < list.length; i++) {
-    const f = list[i], step = (p) => onProgress((i + Math.min(p, 0.99)) / list.length);
+    const f = list[i], step = (p) => onProgress((i + 0.7 * Math.min(p, 1)) / list.length);
     if (f.type !== "application/pdf") throw new Error(`"${f.name}": envie apenas arquivos PDF`);
     const r = await compressPdf(f, step);
     if (r.blob.size > MAX_BYTES) throw new Error(`"${f.name}" ficou com ${kb(r.blob.size)} mesmo após compactar. O limite é ${(MAX_BYTES / 1048576).toFixed(1)} MB por arquivo: divida o documento em partes.`);
-    out.push({ name: f.name, type: "application/pdf", data: await toB64(r.blob), orig: f.size, size: r.blob.size, mode: r.mode });
-    onProgress((i + 1) / list.length);
+    const up = await uploadBlob(r.blob, (q) => onProgress((i + 0.7 + 0.3 * q) / list.length * 0.995));
+    out.push({ name: f.name, type: "application/pdf", ...up, orig: f.size, size: r.blob.size, mode: r.mode });
+    onProgress((i + 1) / list.length * 0.995);
   }
   return out;
 }
@@ -123,7 +139,7 @@ function watchFiles(input) {
     input._files = []; info.textContent = "";
     if (!picked.length) return;
     if (picked.length > MAX_FILES) { input.value = ""; return toast(`Envie no máximo ${MAX_FILES} arquivos`, true); }
-    const m = dialog(`<div class="conv"><div class="spin" aria-hidden="true"></div><h2>Compactando PDF…</h2><p class="muted">Aguarde até chegar a 100%. O sistema fica bloqueado durante a compactação.</p><div class="pbar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></div><b class="pct">0%</b></div>`, { required: true });
+    const m = dialog(`<div class="conv"><div class="spin" aria-hidden="true"></div><h2>Compactando e enviando PDF…</h2><p class="muted">Aguarde até chegar a 100%. O sistema fica bloqueado durante o processo.</p><div class="pbar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></div><b class="pct">0%</b></div>`, { required: true });
     const bar = $(".pbar i", m), pct = $(".pct", m), bx = $(".pbar", m);
     const set = (p) => { const v = Math.round(p * 100); bar.style.width = v + "%"; pct.textContent = v + "%"; bx.setAttribute("aria-valuenow", v); };
     input._job = (async () => {
@@ -491,7 +507,7 @@ const views = {
     shell(`<h1>Novo protocolo</h1><form class="panel" id="f"><div class="frow"><div class="field"><label for="pnum">Número do protocolo</label><input id="pnum" required maxlength="40" placeholder="Ex.: 123/2026" autocomplete="off"></div><div class="field"><label for="pdt">Data do protocolo</label><input id="pdt" type="date" required value="${today}"></div></div><div class="field"><label for="s">Assunto</label><input id="s" required maxlength="200"></div>
     <div class="field"><label for="d">Conteúdo do documento</label><textarea id="d" maxlength="5000"></textarea></div>
     <div class="field"><label>Setores destinatários</label>${list.length ? `<div class="checks">${list.map((s) => `<label><input type="checkbox" name="sec" value="${s.id}"> ${esc(s.name)}</label>`).join("")}</div>` : `<p class="muted">Cadastre setores antes de enviar.</p>`}</div>
-    <div class="field"><label for="a">Anexos (somente PDF; compactados em até 35% antes do envio)</label><input id="a" type="file" multiple accept="application/pdf"></div>
+    <div class="field"><label for="a">Anexos (somente PDF, até 10 MB cada; compactados em até 35% antes do envio)</label><input id="a" type="file" multiple accept="application/pdf"></div>
     <p class="muted">Ao enviar, o protocolo entra na caixa de entrada de cada setor e o recebimento é registrado automaticamente. A visualização só é registrada quando alguém do setor abrir o protocolo.</p>
     <button class="btn">Enviar protocolo</button></form>`, "n");
     watchFiles($("#a"));
