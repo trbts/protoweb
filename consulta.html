@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Consulta de protocolo · Prefeitura Municipal de Careiro</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<meta name="theme-color" content="#551A8B">
+<link rel="icon" href="logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="top"><span class="brandbar"><img class="logo" src="logo.svg" alt="Brasão de Careiro"><span class="org">Prefeitura Municipal de Careiro</span></span></header>
+<main class="pubmain">
+  <h1>Consulta de protocolo</h1>
+  <form class="panel pubform" id="f">
+    <div class="field"><label for="n">Número do protocolo</label><input id="n" required maxlength="40" autocomplete="off" placeholder="Ex.: 123/2026"></div>
+    <button class="btn" id="b">Consultar</button>
+  </form>
+  <div id="res" class="pubres" aria-live="polite"></div>
+  <p class="pubnote">Esta consulta mostra apenas as datas do andamento do protocolo. Para outras informações, procure a Prefeitura.</p>
+</main>
+<script src="js/consulta.js"></script>
+</body>
+</html>
