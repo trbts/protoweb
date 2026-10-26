@@ -284,3 +284,6 @@ select{appearance:none;-webkit-appearance:none;padding-right:34px;background:#ff
 .pubnote{margin-top:22px;font-size:13.5px;color:var(--mute)}
 .pubres h2{margin:22px 0 4px}
 .pubres h3{margin:0 0 14px;font-size:16px}
+
+.btlog{margin:14px 0 0;padding:12px 14px;background:#1f1a2b;color:#e9e6f0;border-radius:10px;font:13px/1.5 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
+.btlog:empty{display:none}
