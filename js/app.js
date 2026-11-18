@@ -277,7 +277,7 @@ function stepLi(st, p, sectorName, files = []) {
   const person = st.author || st.viewer, u1 = st.holder === "u1" && st.leg === "ida", sec = st.holder === "sector", back = st.leg === "volta";
   const lines = [];
   if (u1) lines.push(`Entrada (data do protocolo): ${fmtDay(p.entry_date)}`);
-  else if (sec && !back) lines.push(`E-mail enviado em ${fmt(st.entered_at)}`);
+  else if (sec && !back) lines.push(`${me.mail_mode === "manual" ? "Envio registrado em" : "E-mail enviado em"} ${fmt(st.entered_at)}`);
   else if (st.entered_at) lines.push(`Recebido em ${fmt(st.entered_at)}`);
   if (!sec) lines.push(st.viewed_at ? `Visualizado em ${fmt(st.viewed_at)}` : st.entered_at && !st.exited_at ? "Aguardando visualização" : "");
   if (sec && !back && !st.exited_at) lines.push("Aguardando o retorno do setor");
@@ -292,9 +292,27 @@ const legPanels = (steps, p, sectorName, files) => stepsPanel("Envio ao setor po
   + stepsPanel("Retorno da resposta: Setor → Despacho → Revisão → Protocolo", steps.filter((x) => x.leg === "volta"), p, sectorName, files);
 
 // Resultado do envio por e-mail, com o aviso por WhatsApp para cada contato.
-function showResults(results, p) {
+function showResults(results, p, files = []) {
+  if (results.some((r) => r.manual)) return showManual(results, p, files);
   const m = dialog(`<h2>Resultado do envio</h2><ul class="rs">${results.map((r, i) => `<li><b>${r.sent ? "✓ Enviado" : "✗ Não enviado"}</b> — ${esc(r.name)} <span class="muted">(${esc(r.email)})</span>${r.error ? `<div class="exwarn">${esc(r.error)}</div>` : ""}${r.sent && r.whatsapp ? `<div><button class="btn sec sm" data-wares="${i}">Avisar por WhatsApp (${esc(fmtWa(r.whatsapp))})</button></div>` : ""}</li>`).join("")}</ul><p class="muted">O WhatsApp só avisa que o ato foi enviado por e-mail; os PDFs vão apenas no e-mail.</p>`);
   m.querySelectorAll("[data-wares]").forEach((b) => (b.onclick = () => { const r = results[+b.dataset.wares]; sendWhatsApp(r.whatsapp, waText(p, r)); }));
+}
+
+// Modo manual (sem domínio para o envio automático): o sistema registra o envio no histórico e prepara tudo para o Despacho enviar pelo próprio e-mail.
+function showManual(results, p, files) {
+  const mailto = (r) => `mailto:${r.email.split(";").map((e) => e.trim()).filter(Boolean).join(",")}?subject=${encodeURIComponent(r.subject)}&body=${encodeURIComponent(r.body)}`;
+  const m = dialog(`<h2>Envio registrado. Falta enviar o e-mail</h2>
+    <p class="muted">O sistema anotou o envio no histórico, mas <b>não manda o e-mail sozinho</b>. Siga os passos:</p>
+    <p><b>1. Baixe os PDFs do ato</b></p>${fileList(files) || '<p class="muted">Sem arquivos.</p>'}
+    <p><b>2. Abra o e-mail de cada setor</b>, anexe os PDFs baixados e envie pelo seu e-mail:</p>
+    <ul class="rs">${results.map((r, i) => `<li><b>${r.sent ? esc(r.name) : "✗ " + esc(r.name)}</b> <span class="muted">(${esc(r.email)})</span>${r.error ? `<div class="exwarn">${esc(r.error)}</div>` : ""}${r.sent ? `<div class="acts2"><a class="btn sm" style="text-decoration:none" href="${esc(mailto(r))}">Abrir e-mail</a><button class="btn sec sm" data-cpm="${i}">Copiar endereços</button>${r.whatsapp ? `<button class="btn sec sm" data-wares="${i}">Avisar por WhatsApp</button>` : ""}</div>` : ""}</li>`).join("")}</ul>
+    <p class="muted">Se o seu computador não abrir o e-mail, use “Copiar endereços” e crie a mensagem no seu e-mail, com o assunto <b>Ato administrativo nº ${esc(p.protocol_number)}</b>.</p>`);
+  bindFiles(m);
+  m.querySelectorAll("[data-wares]").forEach((b) => (b.onclick = () => { const r = results[+b.dataset.wares]; sendWhatsApp(r.whatsapp, waText(p, r)); }));
+  m.querySelectorAll("[data-cpm]").forEach((b) => (b.onclick = async () => {
+    const txt = results[+b.dataset.cpm].email.split(";").map((e) => e.trim()).filter(Boolean).join(", ");
+    try { await navigator.clipboard.writeText(txt); toast("Endereços copiados"); } catch { toast(txt); }
+  }));
 }
 
 const views = {
@@ -317,13 +335,14 @@ const views = {
       <p class="muted">Plano <b>${esc(o.plan)}</b></p>
       <div class="usage"><span>Usuários: <b>${o.users}</b> de ${o.max_users}</span><div class="pbar2"><i style="width:${Math.min(100, (o.users / o.max_users) * 100)}%"></i></div></div>
       <div class="usage"><span>Armazenamento: <b>${szb(o.storage_bytes)}</b> de ${szb(o.max_storage_mb * 1048576)}</span><div class="pbar2"><i style="width:${Math.min(100, (o.storage_bytes / 1048576 / o.max_storage_mb) * 100)}%"></i></div></div></div>` : "";
-    const mail = dev ? `<div class="panel"><h2>E-mail de envio</h2>
+    const mailAuto = dev ? `<div class="panel"><h2>E-mail de envio</h2>
       <p class="muted">É por aqui que o Despacho envia os atos aos setores. Os e-mails saem do endereço <b>${esc(es.sender || "(não configurado no servidor)")}</b> com o nome abaixo, e as respostas dos setores chegam ao e-mail que você informar em “Receber respostas em”. Limite: cerca de ${EMAIL_RAW_MB} MB de PDFs por e-mail.</p>
       ${es.service_ready ? "" : `<p class="exwarn">O serviço de e-mail ainda não foi ativado no servidor (chave do Resend). Veja o guia de configuração.</p>`}
       <div class="field"><label for="en">Nome exibido como remetente</label><input id="en" value="${esc(es.from_name)}" maxlength="120" placeholder="${esc(org.name)}"></div>
       <div class="field"><label for="er">Receber respostas em (Reply-To)</label><input id="er" type="email" value="${esc(es.reply_to)}" maxlength="200" placeholder="protocolo@suaorganizacao.gov.br" autocomplete="off"></div>
       <p><button class="btn" id="esv">Salvar e-mail de envio</button></p>
       <div class="frow"><div class="field"><label for="et">Enviar e-mail de teste para</label><input id="et" type="email" value="${esc(me.email)}"></div><div class="field"><label>&nbsp;</label><button class="btn sec" id="ete">Enviar teste</button></div></div></div>` : "";
+    const mail = dev && !es.service_ready ? `<div class="panel"><h2>Envio aos setores</h2><p class="muted">O envio aos setores está no modo <b>manual</b>: ao registrar o envio, o Despacho baixa os PDFs e envia pelo e-mail dele (o sistema abre a mensagem já preenchida). Não há nada para configurar aqui.</p><p class="muted">Para o sistema enviar sozinho é preciso um domínio próprio verificado no serviço de e-mail (veja o guia de configuração).</p></div>` : mailAuto;
     shell(`<h1>Configurações</h1><div class="cfg"><div class="panel"><h2>Meus dados</h2>${profileFields()}<p class="muted">E-mail: ${esc(me.email)}<br>Função: <b>${F[me.funcao] || "Sem função"}</b> (definida pelo administrador)<br>Organização: <b>${esc(org.name)}</b></p><button class="btn" id="sv">Salvar dados</button></div>${orgPanel}${mail}</div>`, "c");
     $("#sv").onclick = guard(async () => { await saveProfile(); toast("Dados salvos"); route(); });
     if (dev) {
@@ -417,8 +436,9 @@ const views = {
   // Painel do protocolo: documento, ação da etapa (Revisão/Despacho/Protocolo) e situação de cada setor/contato.
   async protocolo(pid) {
     const [d, cts, mine] = await Promise.all([api("/api/protocols/" + pid), api("/api/contacts"), api("/api/me")]);
-    me.email_ready = mine.user.email_ready; contacts = cts;
+    me.email_ready = mine.user.email_ready; me.mail_mode = mine.user.mail_mode; contacts = cts;
     const { protocol: p, recipients: recs, steps, files } = d, dev = me.role === "dev";
+    const manual = me.mail_mode === "manual";
     const s = me.step || (dev ? { u2: 2, u3: 3 }[p.stage] || 0 : 0), can3 = me.step === 3 || dev;
     const orig = files.filter((f) => !f.recipient_id), origMB = orig.reduce((a, f) => a + f.file_size, 0) / 1048576;
     const mineFwd = (s === 2 || s === 3) && p.stage === "u" + s;
@@ -427,19 +447,19 @@ const views = {
     const ctList = (list, name) => list.length ? `<div class="checks">${list.map((c) => `<label><input type="checkbox" name="${name}" value="${c.id}"> ${esc(c.name)} <span class="muted">${esc(c.email)}${c.whatsapp ? " · WhatsApp " + esc(fmtWa(c.whatsapp)) : " · sem WhatsApp"}</span></label>`).join("")}</div>` : `<p class="muted">Nenhum contato ativo. Cadastre na aba <a href="#/central/contatos">Contatos</a>.</p>`;
     const mailWarn = !me.email_ready ? `<p class="exwarn">O e-mail de envio ainda não foi configurado. O administrador (Dev) precisa configurá-lo em Configurações antes do envio.</p>` : "";
     const sizeNote = `<p class="muted">PDFs do ato: ${origMB.toFixed(1)} MB. Cada e-mail comporta cerca de ${EMAIL_RAW_MB} MB de PDFs (anexos novos entram na conta).</p>${origMB > EMAIL_RAW_MB ? '<p class="exwarn">Os PDFs do ato já passam do limite do e-mail.</p>' : ""}`;
-    const fwd = mineFwd ? `<div class="panel act"><h2>${s === 2 ? "Análise e encaminhamento ao Despacho" : "Anotação e envio ao setor por e-mail"}</h2>${prevBox(prev, "Recebido de")}<form id="ff">${protoFields("f")}${commentField("f", s === 2 ? "Comentário ou resposta (opcional)" : "Anotação (registro interno, opcional)")}${pdfField("ffa", "Anexar PDF ao documento (opcional; acompanha o ato até o encerramento)", { multiple: true })}${s === 3 ? `<div class="field"><label>Enviar para (setor / contato)</label>${ctList(active, "fct")}</div><div class="field"><label for="fm">Mensagem no e-mail (opcional)</label><textarea id="fm" maxlength="3000" placeholder="Ex.: Favor responder em até 10 dias."></textarea></div>${sizeNote}${mailWarn}` : ""}<button class="btn">${s === 2 ? "Encaminhar ao Despacho" : "Enviar por e-mail"}</button></form></div>` : "";
+    const fwd = mineFwd ? `<div class="panel act"><h2>${s === 2 ? "Análise e encaminhamento ao Despacho" : manual ? "Anotação e registro do envio ao setor" : "Anotação e envio ao setor por e-mail"}</h2>${prevBox(prev, "Recebido de")}<form id="ff">${protoFields("f")}${commentField("f", s === 2 ? "Comentário ou resposta (opcional)" : "Anotação (registro interno, opcional)")}${pdfField("ffa", "Anexar PDF ao documento (opcional; acompanha o ato até o encerramento)", { multiple: true })}${s === 3 ? `<div class="field"><label>Enviar para (setor / contato)</label>${ctList(active, "fct")}</div><div class="field"><label for="fm">Mensagem no e-mail (opcional)</label><textarea id="fm" maxlength="3000" placeholder="Ex.: Favor responder em até 10 dias."></textarea></div>${manual ? `<p class="muted">O sistema não envia o e-mail sozinho: ao registrar, você baixa os PDFs e envia pelo seu próprio e-mail (ele abre já preenchido).</p>` : sizeNote + mailWarn}` : ""}<button class="btn">${s === 2 ? "Encaminhar ao Despacho" : manual ? "Registrar envio" : "Enviar por e-mail"}</button></form></div>` : "";
     const back = recs.filter((r) => ["u1", "u2"].includes(r.return_stage) && (dev || r.return_stage === "u" + me.step)).map((r) => {
       const rs = +r.return_stage.slice(1), reply = steps.filter((x) => x.recipient_id === r.rid && x.leg === "volta" && x.holder === "sector").pop(), last = steps.filter((x) => x.recipient_id === r.rid && x.leg === "volta" && x.exited_at).pop();
       return `<div class="panel act"><h2>Resposta de ${esc(r.sector)} — ${rs === 1 ? "receber e arquivar" : "encaminhar ao Protocolo"}</h2>${prevBox(last, rs === 2 ? "Resposta registrada por" : "Recebido de")}${fileList(files.filter((f) => reply && f.step_id === reply.id))}<form data-ret="${r.rid}" data-s="${rs}">${rs > 1 ? protoFields("r" + r.rid) : ""}${commentField("r" + r.rid, rs === 1 ? "Comentário do arquivamento (opcional)" : "Comentário (opcional)")}<button class="btn">${rs === 1 ? "Receber e arquivar" : "Encaminhar ao Protocolo"}</button></form></div>`;
     }).join("");
     const rows = recs.map((r) => {
       const open = r.sent_at && !r.closed_at && !r.return_stage, canResend = !r.closed_at && !r.return_stage;
-      const acts = can3 ? [canResend ? `<button class="btn sec sm" data-resend="${r.contact_id}">${r.status === "falha" ? "Tentar de novo" : "Reenviar e-mail"}</button>` : "", r.whatsapp && r.sent_at ? `<button class="btn sec sm" data-wa="${r.rid}">WhatsApp</button>` : "", open ? `<button class="btn sm" data-resp="${r.rid}">Setor respondeu</button><button class="btn sec sm" data-noreply="${r.rid}">Setor informou que não precisa</button>` : ""].filter(Boolean).join(" ") : "";
+      const acts = can3 ? [canResend ? `<button class="btn sec sm" data-resend="${r.contact_id}">${manual ? "Preparar e-mail de novo" : r.status === "falha" ? "Tentar de novo" : "Reenviar e-mail"}</button>` : "", r.whatsapp && r.sent_at ? `<button class="btn sec sm" data-wa="${r.rid}">WhatsApp</button>` : "", open ? `<button class="btn sm" data-resp="${r.rid}">Setor respondeu</button><button class="btn sec sm" data-noreply="${r.rid}">Setor informou que não precisa</button>` : ""].filter(Boolean).join(" ") : "";
       return `<tr><td>${esc(r.sector)}<div class="muted">${esc(r.email)}</div></td><td>${two(r.sent_at)}</td><td>${recChip(r)}${r.status === "falha" && r.send_error ? `<div class="exwarn">${esc(r.send_error)}</div>` : ""}</td>${can3 ? `<td class="acts3">${acts}</td>` : ""}</tr>`;
     }).join("");
-    const secs = recs.length ? `<div class="panel"><h2>Setores / contatos</h2><div class="wrap"><table><tr><th>Setor / contato</th><th>E-mail enviado em</th><th>Situação</th>${can3 ? "<th>Ações do Despacho</th>" : ""}</tr>${rows}</table></div>${can3 ? `<p class="muted">O sistema marca “Enviado” no momento do disparo. Quando o setor responder (ou avisar que não precisa), marque aqui manualmente.</p>` : ""}</div>` : "";
+    const secs = recs.length ? `<div class="panel"><h2>Setores / contatos</h2><div class="wrap"><table><tr><th>Setor / contato</th><th>${manual ? "Envio registrado em" : "E-mail enviado em"}</th><th>Situação</th>${can3 ? "<th>Ações do Despacho</th>" : ""}</tr>${rows}</table></div>${can3 ? `<p class="muted">${manual ? "O envio fica registrado quando você clica em “Registrar envio”." : "O sistema marca “Enviado” no momento do disparo."} Quando o setor responder (ou avisar que não precisa), marque aqui manualmente.</p>` : ""}</div>` : "";
     const others = active.filter((c) => !recs.some((r) => r.contact_id === c.id));
-    const more = can3 && p.stage === "sector" && others.length ? `<div class="panel"><h2>Enviar a outro setor</h2><form id="mf">${ctList(others, "mct")}<div class="field"><label for="mm">Mensagem no e-mail (opcional)</label><textarea id="mm" maxlength="3000"></textarea></div><button class="btn">Enviar por e-mail</button></form></div>` : "";
+    const more = can3 && p.stage === "sector" && others.length ? `<div class="panel"><h2>Enviar a outro setor</h2><form id="mf">${ctList(others, "mct")}<div class="field"><label for="mm">Mensagem no e-mail (opcional)</label><textarea id="mm" maxlength="3000"></textarea></div><button class="btn">${manual ? "Registrar envio" : "Enviar por e-mail"}</button></form></div>` : "";
     const rep = recs.map((r) => ({ r, list: steps.filter((x) => x.recipient_id === r.rid && x.leg === "volta" && x.holder === "sector") })).filter((x) => x.list.length);
     const reps = rep.length ? `<div class="panel"><h2>Respostas dos setores</h2>${rep.map(({ r, list }) => list.map((x) => `<div class="msg adm"><small><b>${esc(r.sector)}</b> · registrada por ${esc(x.author || "")} · ${fmt(x.exited_at)} · protocolo ${esc(x.out_number || "")} de ${fmtDay(x.out_date)}</small>${x.comment ? `<div style="white-space:pre-wrap">${esc(x.comment)}</div>` : ""}${fileList(files.filter((f) => f.step_id === x.id))}</div>`).join("")).join("")}</div>` : "";
     shell(`<p><a class="backbtn" href="#/central/protocolos" title="Voltar à lista" aria-label="Voltar à lista">${ICON.back}</a></p><h1>${esc(p.protocol_number)} — ${esc(p.subject)}</h1>
@@ -447,12 +467,12 @@ const views = {
     ${fwd}${back}${secs}${more}${reps}`, "l");
     bindFiles($("main")); poll();
     if ($("#dp")) $("#dp").onclick = () => confirmDo("Excluir este protocolo, os arquivos e o histórico definitivamente? Não dá para desfazer.", async () => { await api("/api/protocols/" + pid, { method: "DELETE" }); toast("Protocolo excluído"); location.hash = "#/central/protocolos"; });
-    const afterSend = (r) => { route(); showResults(r.results, p); };
+    const afterSend = (r) => { route(); showResults(r.results, p, orig); };
     if ($("#ff")) $("#ff").onsubmit = (e) => {
       e.preventDefault();
       const ids = s === 3 ? [...document.querySelectorAll("[name=fct]:checked")].map((c) => +c.value) : [];
       if (s === 3 && !ids.length) return toast("Selecione ao menos um setor/contato", true);
-      confirmDo(s === 2 ? "Encaminhar ao Despacho? Essa ação não pode ser desfeita." : `Enviar o ato por e-mail a ${ids.length} setor(es)? Essa ação não pode ser desfeita.`, async () => {
+      confirmDo(s === 2 ? "Encaminhar ao Despacho? Essa ação não pode ser desfeita." : manual ? `Registrar o envio do ato a ${ids.length} setor(es)? Depois você baixa os PDFs e envia pelo seu e-mail. Essa ação não pode ser desfeita.` : `Enviar o ato por e-mail a ${ids.length} setor(es)? Essa ação não pode ser desfeita.`, async () => {
         const file_ids = await uploadFiles($("#ffa"));
         const body = { protocol_number: $("#fn").value, protocol_date: $("#fd").value, comment: $("#fc").value, file_ids };
         if (s === 3) { body.message = $("#fm").value; body.contact_ids = ids; }
@@ -469,7 +489,7 @@ const views = {
         afterSend(await api(`/api/protocols/${pid}/send`, { method: "POST", body: { contact_ids: ids, message: $("#mm").value } }));
       });
     };
-    document.querySelectorAll("[data-resend]").forEach((b) => (b.onclick = () => confirmDo("Reenviar o e-mail, com os PDFs do ato, a este contato?", async () => {
+    document.querySelectorAll("[data-resend]").forEach((b) => (b.onclick = () => confirmDo(manual ? "Registrar um novo envio e preparar o e-mail para este contato?" : "Reenviar o e-mail, com os PDFs do ato, a este contato?", async () => {
       afterSend(await api(`/api/protocols/${pid}/send`, { method: "POST", body: { contact_ids: [+b.dataset.resend] } }));
     })));
     document.querySelectorAll("[data-wa]").forEach((b) => (b.onclick = () => { const r = recs.find((x) => x.rid == b.dataset.wa); sendWhatsApp(r.whatsapp, waText(p, r)); }));
