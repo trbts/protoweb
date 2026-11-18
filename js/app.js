@@ -148,7 +148,7 @@ function shell(inner, active) {
       <span class="who"><button class="uchip" id="um" aria-haspopup="true" aria-expanded="false" title="${esc(me.name)} (${esc(me.email)})">${avatar(34)}<b>${esc(String(me.name || me.email).split(" ")[0])}</b></button>
       <div class="umenu" id="umenu" hidden><div class="uinfo">${avatar(64)}<b>${esc(me.name)}</b><span class="muted">${esc(me.email)}</span></div><button class="btn sec" id="out">${ICON.out}<span>Sair</span></button></div></span></header>
     <div class="body"><aside class="side"><nav>
-    ${nav("#/central/protocolos", "Protocolos", "l", "nb-prot")}${nav("#/historico", "Histórico", "h")}${canNew() ? nav("#/central/novo", "Novo protocolo", "n") : ""}${nav("#/central/contatos", "Contatos", "ct")}${dev ? nav("#/central/usuarios", "Usuários", "u") + nav("#/central/dev", "Dev", "d") : ""}${nav("#/config", "Configurações", "c")}</nav></aside>
+    ${nav("#/central/protocolos", "Protocolos", "l", "nb-prot")}${dev ? "" : nav("#/historico", "Histórico", "h")}${canNew() ? nav("#/central/novo", "Novo protocolo", "n") : ""}${dev ? "" : nav("#/central/contatos", "Contatos", "ct")}${dev ? nav("#/central/usuarios", "Usuários", "u") + nav("#/central/dev", "Dev", "d") : ""}${nav("#/config", "Configurações", "c")}</nav></aside>
     <main class="fade">${inner}</main></div></div>`;
   $("#out").onclick = logout;
   const um = $("#um"), menu = $("#umenu");
@@ -156,7 +156,7 @@ function shell(inner, active) {
   document.querySelectorAll("img.avatar").forEach((i) => (i.onerror = () => i.replaceWith(Object.assign(document.createElement("span"), { className: "avatar", innerHTML: ICON.user }))));
   paintBadge();
 }
-// Login por e-mail e senha e cadastro de novos usuários. Quem se cadastra fica sem função até o dev definir (User1, User2 ou User3) no Firebase.
+// Login por e-mail e senha e cadastro de novos usuários. Quem se cadastra fica sem função até o dev definir (Protocolo, Revisão ou Despacho), em Usuários.
 let regBusy = false;
 const AUTH_ERR = { "auth/invalid-credential": "E-mail ou senha incorretos.", "auth/invalid-login-credentials": "E-mail ou senha incorretos.", "auth/wrong-password": "E-mail ou senha incorretos.", "auth/user-not-found": "E-mail ou senha incorretos.", "auth/invalid-email": "E-mail inválido.", "auth/email-already-in-use": "Este e-mail já está cadastrado. Use a aba Entrar.", "auth/weak-password": "A senha deve ter pelo menos 6 caracteres.", "auth/too-many-requests": "Muitas tentativas. Aguarde alguns minutos e tente de novo.", "auth/network-request-failed": "Sem conexão. Tente novamente.", "auth/operation-not-allowed": "O login por e-mail e senha não está ativado no Firebase.", "auth/user-disabled": "Esta conta foi desativada." };
 const authErr = (e) => (e.code ? AUTH_ERR[e.code] || "Não foi possível concluir (" + e.code + ")." : e.message);
@@ -207,36 +207,30 @@ async function loadLogo() {
   try { logoUrl = URL.createObjectURL(await api("/api/org/logo", { blob: true, quiet: true })); } catch { logoUrl = null; }
 }
 
-// Primeiro acesso de uma conta nova: criar uma organização (a pessoa vira administrador) ou entrar em uma existente com o código de convite.
-function onboardingView(user) {
-  let mode = "create", nameVal = user.displayName || "";
-  const draw = () => {
-    const create = mode === "create";
-    $("#app").innerHTML = `<div class="login"><div class="panel"><img class="mark" src="protoweb.svg" alt="" width="64" height="64"><h1>Bem-vindo(a)</h1><p class="org-l">Falta pouco para começar</p>
-      <div class="tabs2"><button type="button" id="o-c" class="${create ? "on" : ""}">Criar organização</button><button type="button" id="o-j" class="${create ? "" : "on"}">Entrar com código</button></div>
-      <form id="of" class="lform" novalidate>
-        <div class="field"><label for="on">Seu nome completo</label><input id="on" maxlength="120" value="${esc(nameVal)}" autocomplete="name"></div>
-        ${create
-          ? `<div class="field"><label for="oo">Nome da organização</label><input id="oo" maxlength="120" placeholder="Ex.: Prefeitura Municipal de …"></div><p class="muted">Você será o administrador (Dev) e poderá convidar a sua equipe com um código.</p>`
-          : `<div class="field"><label for="oc">Código de convite</label><input id="oc" maxlength="20" autocomplete="off" class="code"></div><p class="muted">Peça o código ao administrador da sua organização (menu Configurações). Depois, ele define a sua função.</p>`}
-        <button class="btn" id="ob">${create ? "Criar organização" : "Entrar na organização"}</button>
-        <p><button type="button" class="link" id="oout">Sair</button></p>
-      </form></div></div>`;
-    $("#o-c").onclick = () => { nameVal = $("#on").value; mode = "create"; draw(); };
-    $("#o-j").onclick = () => { nameVal = $("#on").value; mode = "join"; draw(); };
-    $("#oout").onclick = logout;
-    $("#of").onsubmit = async (e) => {
-      e.preventDefault();
-      const b = $("#ob"); b.disabled = true;
-      try {
-        const body = { mode, name: $("#on").value.trim() };
-        if (create) body.org_name = $("#oo").value.trim(); else body.code = $("#oc").value.trim();
-        await api("/api/onboarding", { method: "POST", body });
-        await boot(auth.currentUser);
-      } catch (err) { toast(err.message, true); b.disabled = false; }
-    };
+// Primeiro acesso de uma conta nova. Se ainda não existe organização, quem se cadastra cria a organização e vira o único administrador (Dev).
+// Nos demais casos, a pessoa entra com o código de convite e fica sem função até o Dev definir.
+function onboardingView(user, first) {
+  const create = !!first;
+  $("#app").innerHTML = `<div class="login"><div class="panel"><img class="mark" src="protoweb.svg" alt="" width="64" height="64"><h1>${create ? "Primeiro acesso" : "Bem-vindo(a)"}</h1><p class="org-l">${create ? "Configure a sua organização" : "Falta pouco para começar"}</p>
+    <form id="of" class="lform" novalidate>
+      <div class="field"><label for="on">Seu nome completo</label><input id="on" maxlength="120" value="${esc(user.displayName || "")}" autocomplete="name"></div>
+      ${create
+        ? `<div class="field"><label for="oo">Nome da organização</label><input id="oo" maxlength="120" placeholder="Ex.: Prefeitura Municipal de …"></div><p class="muted">Você será o administrador (Dev) do sistema e o único com esse perfil. Depois, convide a equipe com o código de convite.</p>`
+        : `<div class="field"><label for="oc">Código de convite</label><input id="oc" maxlength="20" autocomplete="off" class="code"></div><p class="muted">Peça o código ao administrador da sua organização (menu Configurações). Depois, ele define a sua função.</p>`}
+      <button class="btn" id="ob">${create ? "Criar e entrar" : "Entrar na organização"}</button>
+      <p><button type="button" class="link" id="oout">Sair</button></p>
+    </form></div></div>`;
+  $("#oout").onclick = logout;
+  $("#of").onsubmit = async (e) => {
+    e.preventDefault();
+    const b = $("#ob"); b.disabled = true;
+    try {
+      const body = { mode: create ? "create" : "join", name: $("#on").value.trim() };
+      if (create) body.org_name = $("#oo").value.trim(); else body.code = $("#oc").value.trim();
+      await api("/api/onboarding", { method: "POST", body });
+      await boot(auth.currentUser);
+    } catch (err) { toast(err.message, true); b.disabled = false; }
   };
-  draw();
 }
 
 // ---------- avisos dentro da página (contador e alerta enquanto o sistema está aberto)
@@ -258,13 +252,13 @@ function startNotifications() { clearInterval(timer); badge = null; poll(); time
 async function logout() { clearInterval(timer); signOut(auth); }
 
 // ---------- fluxo de tramitação: funções de apoio
-const STEP = { u1: "User1", u2: "User2", u3: "User3", sector: "Setor" };
-const RS = { u2: "Com o User2", u1: "Com o User1 (arquivar)", done: "Encerrada (arquivada)" };
+const STEP = { u1: "Protocolo", u2: "Revisão", u3: "Despacho", sector: "Setor" };
+const RS = { u2: "Com a Revisão", u1: "Com o Protocolo (arquivar)", done: "Encerrada (arquivada)" };
 const staff = () => me.role === "dev" || me.step > 0;
-const canNew = () => me.step === 1 || me.role === "dev";
+const canNew = () => me.step === 1;
 const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const fmtWa = (p) => (p ? `+${p.slice(0, 2)} (${p.slice(2, 4)}) ${p.slice(4, -4)}-${p.slice(-4)}` : "—");
-const stageChip = (p) => p.stage === "u2" ? '<span class="chip u">Com o User2</span>' : p.stage === "u3" ? '<span class="chip u">Com o User3</span>'
+const stageChip = (p) => p.stage === "u2" ? '<span class="chip u">Com a Revisão</span>' : p.stage === "u3" ? '<span class="chip u">Com o Despacho</span>'
   : p.nrec && p.nclosed === p.nrec ? '<span class="chip respondido">Encerrado</span>' : p.nback ? '<span class="chip visualizado">Resposta em retorno</span>' : '<span class="chip recebido">Aguardando setor</span>';
 const countsOf = (p, recs) => ({ ...p, nrec: recs.length, nback: recs.filter((r) => ["u2", "u1"].includes(r.return_stage)).length, nclosed: recs.filter((r) => r.closed_at).length });
 // Situação de um setor/contato: encerrado sem resposta, resposta em retorno, falha no envio ou aguardando o setor.
@@ -277,8 +271,8 @@ const confirmDo = (text, fn) => dialog(`<h2>Confirmar</h2><p>${text}</p>`, { ok:
 const prevBox = (x, label) => x ? `<div class="msg"><small>${label}: <b>${esc(x.author || STEP[x.holder])}</b> · ${fmt(x.exited_at)}${x.out_number ? ` · protocolo ${esc(x.out_number)} de ${fmtDay(x.out_date)}` : ""}</small>${x.comment ? `<div style="white-space:pre-wrap">${esc(x.comment)}</div>` : ""}</div>` : "";
 const waText = (p, r) => `Olá! ${org.name} enviou por e-mail (${r.email}) o ato administrativo nº ${p.protocol_number} – ${p.subject}. Por favor, confira a caixa de entrada (e o spam) e nos retorne por e-mail. Obrigado!`;
 
-// Uma passagem do documento (histórico de movimentações). User1 na ida: a entrada é a data do protocolo; nos demais, a data do recebimento.
-// O "setor" é externo: a ida é o e-mail enviado pelo User3 e a volta é a resposta registrada por ele.
+// Uma passagem do documento (histórico de movimentações). Protocolo na ida: a entrada é a data do protocolo; nos demais, a data do recebimento.
+// O "setor" é externo: a ida é o e-mail enviado pelo Despacho e a volta é a resposta registrada por ele.
 function stepLi(st, p, sectorName, files = []) {
   const person = st.author || st.viewer, u1 = st.holder === "u1" && st.leg === "ida", sec = st.holder === "sector", back = st.leg === "volta";
   const lines = [];
@@ -295,7 +289,7 @@ function stepLi(st, p, sectorName, files = []) {
 }
 const stepsPanel = (title, list, p, sectorName, files) => list.length ? `<section class="panel"><h2>${title}</h2><ol class="stp">${list.map((x) => stepLi(x, p, sectorName, files)).join("")}</ol></section>` : "";
 const legPanels = (steps, p, sectorName, files) => stepsPanel("Envio ao setor por e-mail", steps.filter((x) => x.leg === "ida"), p, sectorName, files)
-  + stepsPanel("Retorno da resposta: Setor → User3 → User2 → User1", steps.filter((x) => x.leg === "volta"), p, sectorName, files);
+  + stepsPanel("Retorno da resposta: Setor → Despacho → Revisão → Protocolo", steps.filter((x) => x.leg === "volta"), p, sectorName, files);
 
 // Resultado do envio por e-mail, com o aviso por WhatsApp para cada contato.
 function showResults(results, p) {
@@ -305,9 +299,10 @@ function showResults(results, p) {
 
 const views = {
   async config() {
-    const F = { dev: "Dev", user1: "User1", user2: "User2", user3: "User3", nenhuma: "Sem função" }, dev = me.role === "dev";
+    const F = { dev: "Dev", user1: "Protocolo", user2: "Revisão", user3: "Despacho", nenhuma: "Sem função" }, dev = me.role === "dev";
     const [es, o] = dev ? await Promise.all([api("/api/settings/email"), api("/api/org")]) : [null, null];
     const mb = (b) => (b / 1048576).toFixed(b < 10485760 ? 1 : 0);
+    const szb = (b) => (b >= 1073741824 ? (b / 1073741824).toFixed(b % 1073741824 ? 2 : 0).replace(".", ",") + " GB" : mb(b) + " MB");
     const orgPanel = dev ? `<div class="panel"><h2>Organização</h2>
       <div class="field"><label for="on2">Nome da organização</label><input id="on2" value="${esc(o.name)}" maxlength="120"></div>
       <p><button class="btn sec sm" id="osv">Salvar nome</button></p>
@@ -321,9 +316,9 @@ const views = {
       <h2 class="sech">Plano</h2>
       <p class="muted">Plano <b>${esc(o.plan)}</b></p>
       <div class="usage"><span>Usuários: <b>${o.users}</b> de ${o.max_users}</span><div class="pbar2"><i style="width:${Math.min(100, (o.users / o.max_users) * 100)}%"></i></div></div>
-      <div class="usage"><span>Armazenamento: <b>${mb(o.storage_bytes)} MB</b> de ${o.max_storage_mb} MB</span><div class="pbar2"><i style="width:${Math.min(100, (o.storage_bytes / 1048576 / o.max_storage_mb) * 100)}%"></i></div></div></div>` : "";
+      <div class="usage"><span>Armazenamento: <b>${szb(o.storage_bytes)}</b> de ${szb(o.max_storage_mb * 1048576)}</span><div class="pbar2"><i style="width:${Math.min(100, (o.storage_bytes / 1048576 / o.max_storage_mb) * 100)}%"></i></div></div></div>` : "";
     const mail = dev ? `<div class="panel"><h2>E-mail de envio</h2>
-      <p class="muted">É por aqui que o User3 envia os atos aos setores. Os e-mails saem do endereço <b>${esc(es.sender || "(não configurado no servidor)")}</b> com o nome abaixo, e as respostas dos setores chegam ao e-mail que você informar em “Receber respostas em”. Limite: cerca de ${EMAIL_RAW_MB} MB de PDFs por e-mail.</p>
+      <p class="muted">É por aqui que o Despacho envia os atos aos setores. Os e-mails saem do endereço <b>${esc(es.sender || "(não configurado no servidor)")}</b> com o nome abaixo, e as respostas dos setores chegam ao e-mail que você informar em “Receber respostas em”. Limite: cerca de ${EMAIL_RAW_MB} MB de PDFs por e-mail.</p>
       ${es.service_ready ? "" : `<p class="exwarn">O serviço de e-mail ainda não foi ativado no servidor (chave do Resend). Veja o guia de configuração.</p>`}
       <div class="field"><label for="en">Nome exibido como remetente</label><input id="en" value="${esc(es.from_name)}" maxlength="120" placeholder="${esc(org.name)}"></div>
       <div class="field"><label for="er">Receber respostas em (Reply-To)</label><input id="er" type="email" value="${esc(es.reply_to)}" maxlength="200" placeholder="protocolo@suaorganizacao.gov.br" autocomplete="off"></div>
@@ -351,32 +346,32 @@ const views = {
     if (!id) return staffList("Histórico", "h", true);
     const d = await api("/api/protocols/" + id + "?h=1"), p = d.protocol, recs = d.recipients;
     const head = `<h1>${esc(p.protocol_number)} — ${esc(p.subject)}</h1><p class="muted">${stageChip(countsOf(p, recs))}${p.closed_at ? ` &nbsp; Ato encerrado em ${fmt(p.closed_at)}` : ""}</p>`;
-    const body = stepsPanel("Tramitação interna: User1 → User2 → User3", d.steps.filter((x) => !x.recipient_id), p, "", d.files) + recs.map((r) => `<h2 class="sech">${esc(r.sector)} ${recChip(r)}</h2>` + legPanels(d.steps.filter((x) => x.recipient_id === r.rid), p, r.sector, d.files)).join("");
+    const body = stepsPanel("Tramitação interna: Protocolo → Revisão → Despacho", d.steps.filter((x) => !x.recipient_id), p, "", d.files) + recs.map((r) => `<h2 class="sech">${esc(r.sector)} ${recChip(r)}</h2>` + legPanels(d.steps.filter((x) => x.recipient_id === r.rid), p, r.sector, d.files)).join("");
     shell(`<div class="hhead"><a class="backbtn" href="#/historico" title="Voltar ao histórico" aria-label="Voltar ao histórico">${ICON.back}</a><div>${head}</div></div><div class="hist">${body || `<div class="panel empty">Sem movimentações registradas.</div>`}</div>`, "h");
     poll();
   },
   async protocolos() { await staffList("Protocolos", "l"); },
-  // Novo protocolo: exclusivo do User1. Sobe o PDF, registra protocolo e data e encaminha ao User2.
+  // Novo protocolo: exclusivo do Protocolo. Sobe o PDF, registra protocolo e data e encaminha à Revisão.
   async novo() {
     shell(`<h1>Novo protocolo</h1><form class="panel" id="f">${protoFields("p").replace('for="pn">Número do protocolo', 'for="pn">Número do protocolo (será o número do ato administrativo)')}<div class="field"><label for="s">Assunto</label><input id="s" required maxlength="200"></div>
     <div class="field"><label for="d">Conteúdo do documento / comentário (opcional)</label><textarea id="d" maxlength="5000"></textarea></div>
     ${pdfField("a", "PDF do documento (pode anexar mais de um)", { multiple: true, required: true })}
-    <p class="muted">Ao enviar, o documento é encaminhado ao User2. Os PDFs ficam guardados na nuvem e acompanham o ato até o encerramento.</p>
-    <button class="btn">Enviar ao User2</button></form>`, "n");
+    <p class="muted">Ao enviar, o documento é encaminhado à Revisão. Os PDFs ficam guardados na nuvem e acompanham o ato até o encerramento.</p>
+    <button class="btn">Enviar à Revisão</button></form>`, "n");
     $("#f").onsubmit = (e) => {
       e.preventDefault();
-      confirmDo("Encaminhar este protocolo ao User2? Essa ação não pode ser desfeita.", async () => {
+      confirmDo("Encaminhar este protocolo à Revisão? Essa ação não pode ser desfeita.", async () => {
         const file_ids = await uploadFiles($("#a"));
         if (!file_ids.length) throw new Error("Anexe o PDF do documento");
         const r = await api("/api/protocols", { method: "POST", body: { protocol_number: $("#pn").value, entry_date: $("#pd").value, subject: $("#s").value, description: $("#d").value, file_ids } });
-        toast("Protocolo enviado ao User2: " + r.protocol_number); location.hash = "#/central/protocolos";
+        toast("Protocolo enviado à Revisão: " + r.protocol_number); location.hash = "#/central/protocolos";
       });
     };
   },
-  // Contatos: agenda dos setores (externos ao sistema) com e-mail e WhatsApp, usada pelo User3 no envio.
+  // Contatos: agenda dos setores (externos ao sistema) com e-mail e WhatsApp, usada pelo Despacho no envio.
   async contatos() {
     const list = await api("/api/contacts");
-    shell(`<h1>Contatos dos setores</h1><p class="muted">Os setores ficam fora do sistema: o User3 envia o ato por e-mail (e avisa por WhatsApp) para os contatos cadastrados aqui.</p>
+    shell(`<h1>Contatos dos setores</h1><p class="muted">Os setores ficam fora do sistema: o Despacho envia o ato por e-mail (e avisa por WhatsApp) para os contatos cadastrados aqui.</p>
     <form class="panel filters" id="f" style="grid-template-columns:1fr 1.4fr 1fr auto"><div><label for="n">Setor / contato</label><input id="n" required maxlength="120"></div><div><label for="e">E-mail (vários: separe por ;)</label><input id="e" required maxlength="300"></div><div><label for="w">WhatsApp (com DDD)</label><input id="w" inputmode="tel" placeholder="(92) 99999-9999"></div><button class="btn">Cadastrar</button></form>
     <div class="wrap"><table><tr><th>Setor / contato</th><th>E-mail</th><th>WhatsApp</th><th>Atos enviados</th><th>Situação</th><th></th></tr>${list.map((c) => `<tr><td>${esc(c.name)}</td><td>${esc(c.email)}</td><td class="nw">${esc(fmtWa(c.whatsapp))}</td><td>${c.used}</td><td>${c.active ? "Ativo" : "Desativado"}</td><td><button class="btn sec sm" data-e="${c.id}">Editar</button></td></tr>`).join("") || `<tr><td colspan="6" class="empty">Nenhum contato cadastrado.</td></tr>`}</table></div>`, "ct");
     $("#f").onsubmit = guard(async (e) => { e.preventDefault(); await api("/api/contacts", { method: "POST", body: { name: $("#n").value, email: $("#e").value, whatsapp: $("#w").value } }); toast("Contato cadastrado"); route(); });
@@ -390,8 +385,8 @@ const views = {
   async usuarios() {
     if (me.role !== "dev") return (location.hash = "#/central/protocolos");
     const users = await api("/api/users");
-    const F = { dev: "Dev", user1: "User1", user2: "User2", user3: "User3", nenhuma: "Sem função" };
-    shell(`<h1>Usuários</h1><p class="muted">Cada pessoa se cadastra com e-mail e senha e entra na organização com o código de convite (veja em Configurações), ficando <b>sem função</b>. Aqui você define User1, User2, User3 ou Dev e bloqueia acessos. Quem mudar de função precisa atualizar a página.</p>
+    const F = { dev: "Dev", user1: "Protocolo", user2: "Revisão", user3: "Despacho", nenhuma: "Sem função" };
+    shell(`<h1>Usuários</h1><p class="muted">Cada pessoa se cadastra com e-mail e senha e entra na organização com o código de convite (veja em Configurações), ficando <b>sem função</b>. Aqui você define Protocolo, Revisão ou Despacho e bloqueia acessos. Só existe um Dev: quem fez o primeiro acesso. Quem mudar de função precisa atualizar a página.</p>
     <div class="wrap"><table><tr><th>Nome</th><th>E-mail</th><th>Função</th><th>Acesso</th><th></th></tr>${users.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${F[u.funcao] || "Sem função"}</td><td>${u.active ? "Ativo" : "Bloqueado"}</td><td class="nw"><button class="btn sec sm" data-u="${u.id}">Editar</button>${u.id !== me.id ? ` <button class="btn sec sm" data-del="${u.id}">Excluir</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">Nenhum usuário.</td></tr>`}</table></div>`, "u");
     document.querySelectorAll("[data-del]").forEach((b) => (b.onclick = () => {
       const u = users.find((x) => x.id == b.dataset.del);
@@ -399,7 +394,7 @@ const views = {
     }));
     document.querySelectorAll("[data-u]").forEach((b) => (b.onclick = () => {
       const u = users.find((x) => x.id == b.dataset.u), self = u.id === me.id;
-      dialog(`<h2>${esc(u.name)}</h2><div class="field"><label for="ust">Função</label><select id="ust" ${self ? "disabled" : ""}><option value="nenhuma">Sem função</option>${[["user1", "User1 — Upload, protocolo inicial e encaminhamento"], ["user2", "User2 — Análise, comentários, novo protocolo e encaminhamento"], ["user3", "User3 — Anotação, envio ao setor por e-mail e registro da resposta"], ["dev", "Dev — acesso total"]].map(([v, t]) => `<option value="${v}" ${u.funcao === v ? "selected" : ""}>${t}</option>`).join("")}</select></div><label class="checks"><span><input type="checkbox" id="ua" ${u.active ? "checked" : ""}> Acesso ao sistema ativo</span></label>`, { ok: "Salvar", onOk: async () => {
+      dialog(`<h2>${esc(u.name)}</h2><div class="field"><label for="ust">Função</label><select id="ust" ${self ? "disabled" : ""}><option value="nenhuma">Sem função</option>${[["user1", "Protocolo — Upload, protocolo inicial e encaminhamento"], ["user2", "Revisão — Análise, comentários e encaminhamento"], ["user3", "Despacho — Anotação, envio ao setor por e-mail e registro da resposta"], ["dev", "Dev — acesso total (único)"]].filter(([v]) => v !== "dev" || u.funcao === "dev").map(([v, t]) => `<option value="${v}" ${u.funcao === v ? "selected" : ""}>${t}</option>`).join("")}</select></div><label class="checks"><span><input type="checkbox" id="ua" ${u.active ? "checked" : ""}> Acesso ao sistema ativo</span></label>`, { ok: "Salvar", onOk: async () => {
         await api("/api/users/" + u.id, { method: "PUT", body: { active: $("#ua").checked, role: $("#ust").value } });
         toast("Alterações salvas. A pessoa precisa atualizar a página."); route();
       } });
@@ -419,7 +414,7 @@ const views = {
       } });
     }));
   },
-  // Painel do protocolo: documento, ação da etapa (User2/User3/User1) e situação de cada setor/contato.
+  // Painel do protocolo: documento, ação da etapa (Revisão/Despacho/Protocolo) e situação de cada setor/contato.
   async protocolo(pid) {
     const [d, cts, mine] = await Promise.all([api("/api/protocols/" + pid), api("/api/contacts"), api("/api/me")]);
     me.email_ready = mine.user.email_ready; contacts = cts;
@@ -432,17 +427,17 @@ const views = {
     const ctList = (list, name) => list.length ? `<div class="checks">${list.map((c) => `<label><input type="checkbox" name="${name}" value="${c.id}"> ${esc(c.name)} <span class="muted">${esc(c.email)}${c.whatsapp ? " · WhatsApp " + esc(fmtWa(c.whatsapp)) : " · sem WhatsApp"}</span></label>`).join("")}</div>` : `<p class="muted">Nenhum contato ativo. Cadastre na aba <a href="#/central/contatos">Contatos</a>.</p>`;
     const mailWarn = !me.email_ready ? `<p class="exwarn">O e-mail de envio ainda não foi configurado. O administrador (Dev) precisa configurá-lo em Configurações antes do envio.</p>` : "";
     const sizeNote = `<p class="muted">PDFs do ato: ${origMB.toFixed(1)} MB. Cada e-mail comporta cerca de ${EMAIL_RAW_MB} MB de PDFs (anexos novos entram na conta).</p>${origMB > EMAIL_RAW_MB ? '<p class="exwarn">Os PDFs do ato já passam do limite do e-mail.</p>' : ""}`;
-    const fwd = mineFwd ? `<div class="panel act"><h2>${s === 2 ? "Análise e encaminhamento ao User3" : "Anotação e envio ao setor por e-mail"}</h2>${prevBox(prev, "Recebido de")}<form id="ff">${protoFields("f")}${commentField("f", s === 2 ? "Comentário ou resposta (opcional)" : "Anotação (registro interno, opcional)")}${pdfField("ffa", "Anexar PDF ao documento (opcional; acompanha o ato até o encerramento)", { multiple: true })}${s === 3 ? `<div class="field"><label>Enviar para (setor / contato)</label>${ctList(active, "fct")}</div><div class="field"><label for="fm">Mensagem no e-mail (opcional)</label><textarea id="fm" maxlength="3000" placeholder="Ex.: Favor responder em até 10 dias."></textarea></div>${sizeNote}${mailWarn}` : ""}<button class="btn">${s === 2 ? "Encaminhar ao User3" : "Enviar por e-mail"}</button></form></div>` : "";
+    const fwd = mineFwd ? `<div class="panel act"><h2>${s === 2 ? "Análise e encaminhamento ao Despacho" : "Anotação e envio ao setor por e-mail"}</h2>${prevBox(prev, "Recebido de")}<form id="ff">${protoFields("f")}${commentField("f", s === 2 ? "Comentário ou resposta (opcional)" : "Anotação (registro interno, opcional)")}${pdfField("ffa", "Anexar PDF ao documento (opcional; acompanha o ato até o encerramento)", { multiple: true })}${s === 3 ? `<div class="field"><label>Enviar para (setor / contato)</label>${ctList(active, "fct")}</div><div class="field"><label for="fm">Mensagem no e-mail (opcional)</label><textarea id="fm" maxlength="3000" placeholder="Ex.: Favor responder em até 10 dias."></textarea></div>${sizeNote}${mailWarn}` : ""}<button class="btn">${s === 2 ? "Encaminhar ao Despacho" : "Enviar por e-mail"}</button></form></div>` : "";
     const back = recs.filter((r) => ["u1", "u2"].includes(r.return_stage) && (dev || r.return_stage === "u" + me.step)).map((r) => {
       const rs = +r.return_stage.slice(1), reply = steps.filter((x) => x.recipient_id === r.rid && x.leg === "volta" && x.holder === "sector").pop(), last = steps.filter((x) => x.recipient_id === r.rid && x.leg === "volta" && x.exited_at).pop();
-      return `<div class="panel act"><h2>Resposta de ${esc(r.sector)} — ${rs === 1 ? "receber e arquivar" : "encaminhar ao User1"}</h2>${prevBox(last, rs === 2 ? "Resposta registrada por" : "Recebido de")}${fileList(files.filter((f) => reply && f.step_id === reply.id))}<form data-ret="${r.rid}" data-s="${rs}">${rs > 1 ? protoFields("r" + r.rid) : ""}${commentField("r" + r.rid, rs === 1 ? "Comentário do arquivamento (opcional)" : "Comentário (opcional)")}<button class="btn">${rs === 1 ? "Receber e arquivar" : "Encaminhar ao User1"}</button></form></div>`;
+      return `<div class="panel act"><h2>Resposta de ${esc(r.sector)} — ${rs === 1 ? "receber e arquivar" : "encaminhar ao Protocolo"}</h2>${prevBox(last, rs === 2 ? "Resposta registrada por" : "Recebido de")}${fileList(files.filter((f) => reply && f.step_id === reply.id))}<form data-ret="${r.rid}" data-s="${rs}">${rs > 1 ? protoFields("r" + r.rid) : ""}${commentField("r" + r.rid, rs === 1 ? "Comentário do arquivamento (opcional)" : "Comentário (opcional)")}<button class="btn">${rs === 1 ? "Receber e arquivar" : "Encaminhar ao Protocolo"}</button></form></div>`;
     }).join("");
     const rows = recs.map((r) => {
       const open = r.sent_at && !r.closed_at && !r.return_stage, canResend = !r.closed_at && !r.return_stage;
       const acts = can3 ? [canResend ? `<button class="btn sec sm" data-resend="${r.contact_id}">${r.status === "falha" ? "Tentar de novo" : "Reenviar e-mail"}</button>` : "", r.whatsapp && r.sent_at ? `<button class="btn sec sm" data-wa="${r.rid}">WhatsApp</button>` : "", open ? `<button class="btn sm" data-resp="${r.rid}">Setor respondeu</button><button class="btn sec sm" data-noreply="${r.rid}">Setor informou que não precisa</button>` : ""].filter(Boolean).join(" ") : "";
       return `<tr><td>${esc(r.sector)}<div class="muted">${esc(r.email)}</div></td><td>${two(r.sent_at)}</td><td>${recChip(r)}${r.status === "falha" && r.send_error ? `<div class="exwarn">${esc(r.send_error)}</div>` : ""}</td>${can3 ? `<td class="acts3">${acts}</td>` : ""}</tr>`;
     }).join("");
-    const secs = recs.length ? `<div class="panel"><h2>Setores / contatos</h2><div class="wrap"><table><tr><th>Setor / contato</th><th>E-mail enviado em</th><th>Situação</th>${can3 ? "<th>Ações do User3</th>" : ""}</tr>${rows}</table></div>${can3 ? `<p class="muted">O sistema marca “Enviado” no momento do disparo. Quando o setor responder (ou avisar que não precisa), marque aqui manualmente.</p>` : ""}</div>` : "";
+    const secs = recs.length ? `<div class="panel"><h2>Setores / contatos</h2><div class="wrap"><table><tr><th>Setor / contato</th><th>E-mail enviado em</th><th>Situação</th>${can3 ? "<th>Ações do Despacho</th>" : ""}</tr>${rows}</table></div>${can3 ? `<p class="muted">O sistema marca “Enviado” no momento do disparo. Quando o setor responder (ou avisar que não precisa), marque aqui manualmente.</p>` : ""}</div>` : "";
     const others = active.filter((c) => !recs.some((r) => r.contact_id === c.id));
     const more = can3 && p.stage === "sector" && others.length ? `<div class="panel"><h2>Enviar a outro setor</h2><form id="mf">${ctList(others, "mct")}<div class="field"><label for="mm">Mensagem no e-mail (opcional)</label><textarea id="mm" maxlength="3000"></textarea></div><button class="btn">Enviar por e-mail</button></form></div>` : "";
     const rep = recs.map((r) => ({ r, list: steps.filter((x) => x.recipient_id === r.rid && x.leg === "volta" && x.holder === "sector") })).filter((x) => x.list.length);
@@ -457,13 +452,13 @@ const views = {
       e.preventDefault();
       const ids = s === 3 ? [...document.querySelectorAll("[name=fct]:checked")].map((c) => +c.value) : [];
       if (s === 3 && !ids.length) return toast("Selecione ao menos um setor/contato", true);
-      confirmDo(s === 2 ? "Encaminhar ao User3? Essa ação não pode ser desfeita." : `Enviar o ato por e-mail a ${ids.length} setor(es)? Essa ação não pode ser desfeita.`, async () => {
+      confirmDo(s === 2 ? "Encaminhar ao Despacho? Essa ação não pode ser desfeita." : `Enviar o ato por e-mail a ${ids.length} setor(es)? Essa ação não pode ser desfeita.`, async () => {
         const file_ids = await uploadFiles($("#ffa"));
         const body = { protocol_number: $("#fn").value, protocol_date: $("#fd").value, comment: $("#fc").value, file_ids };
         if (s === 3) { body.message = $("#fm").value; body.contact_ids = ids; }
         const r = await api(`/api/protocols/${pid}/forward`, { method: "POST", body });
         poll();
-        if (s === 3) afterSend(r); else { toast("Encaminhado ao User3"); location.hash = "#/central/protocolos"; }
+        if (s === 3) afterSend(r); else { toast("Encaminhado ao Despacho"); location.hash = "#/central/protocolos"; }
       });
     };
     if ($("#mf")) $("#mf").onsubmit = (e) => {
@@ -480,10 +475,10 @@ const views = {
     document.querySelectorAll("[data-wa]").forEach((b) => (b.onclick = () => { const r = recs.find((x) => x.rid == b.dataset.wa); sendWhatsApp(r.whatsapp, waText(p, r)); }));
     document.querySelectorAll("[data-resp]").forEach((b) => (b.onclick = () => {
       const r = recs.find((x) => x.rid == b.dataset.resp);
-      dialog(`<h2>Setor respondeu — ${esc(r.sector)}</h2><p class="muted">Registre o protocolo da resposta e anexe o PDF recebido por e-mail. A resposta segue ao User2 e depois ao User1, que arquiva.</p>${protoFields("x")}${commentField("x")}${pdfField("xf", "PDF da resposta", { multiple: true, required: true })}`, { ok: "Registrar resposta", onOk: async () => {
+      dialog(`<h2>Setor respondeu — ${esc(r.sector)}</h2><p class="muted">Registre o protocolo da resposta e anexe o PDF recebido por e-mail. A resposta segue à Revisão e depois ao Protocolo, que arquiva.</p>${protoFields("x")}${commentField("x")}${pdfField("xf", "PDF da resposta", { multiple: true, required: true })}`, { ok: "Registrar resposta", onOk: async () => {
         const file_ids = await uploadFiles($("#xf"));
         if (!file_ids.length) throw new Error("Anexe o PDF da resposta");
-        await api(`/api/recipients/${r.rid}/response`, { method: "POST", body: { protocol_number: $("#xn").value, protocol_date: $("#xd").value, comment: $("#xc").value, file_ids } }); toast("Resposta registrada e encaminhada ao User2"); poll(); route();
+        await api(`/api/recipients/${r.rid}/response`, { method: "POST", body: { protocol_number: $("#xn").value, protocol_date: $("#xd").value, comment: $("#xc").value, file_ids } }); toast("Resposta registrada e encaminhada à Revisão"); poll(); route();
       } });
     }));
     document.querySelectorAll("[data-noreply]").forEach((b) => (b.onclick = () => {
@@ -495,9 +490,9 @@ const views = {
     document.querySelectorAll("[data-ret]").forEach((f) => (f.onsubmit = (e) => {
       e.preventDefault(); const id = f.dataset.ret, rs = +f.dataset.s, body = { comment: $("#r" + id + "c").value };
       if (rs > 1) { body.protocol_number = $("#r" + id + "n").value; body.protocol_date = $("#r" + id + "d").value; }
-      confirmDo(rs === 1 ? "Receber e arquivar a resposta?" : "Encaminhar ao User1? Essa ação não pode ser desfeita.", async () => {
+      confirmDo(rs === 1 ? "Receber e arquivar a resposta?" : "Encaminhar ao Protocolo? Essa ação não pode ser desfeita.", async () => {
         await api(`/api/recipients/${id}/advance`, { method: "POST", body });
-        toast(rs === 1 ? "Resposta arquivada" : "Resposta encaminhada ao User1"); poll(); route();
+        toast(rs === 1 ? "Resposta arquivada" : "Resposta encaminhada ao Protocolo"); poll(); route();
       });
     }));
   },
@@ -505,7 +500,7 @@ const views = {
 
 // Lista de protocolos (por ato administrativo).
 async function staffList(title, active, hist = false) {
-  const ETAPAS = [["mine", "Aguardando minha ação"], ["u2", "Com o User2"], ["u3", "Com o User3"], ["sector", "Aguardando setor"], ["volta", "Resposta em retorno"], ["done", "Encerrados"]];
+  const ETAPAS = [["mine", "Aguardando minha ação"], ["u2", "Com a Revisão"], ["u3", "Com o Despacho"], ["sector", "Aguardando setor"], ["volta", "Resposta em retorno"], ["done", "Encerrados"]];
   contacts = await api("/api/contacts");
   shell(`<h1>${title}</h1><form class="panel filters c" id="ff"><div><label for="q">Número ou assunto</label><input id="q"></div>
     <div><label for="sc">Setor / contato</label><select id="sc"><option value="">Todos</option>${contacts.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select></div>
@@ -531,7 +526,8 @@ async function route() {
     let name = h[0], arg = h[1];
     if (name === "central") { name = ["protocolos", "novo", "contatos", "usuarios", "dev"].includes(h[1]) ? h[1] : "protocolos"; arg = undefined; }
     if ((name === "usuarios" || name === "dev") && me.role !== "dev") { toast("Acesso restrito ao dev", true); return (location.hash = home); }
-    if (name === "novo" && !canNew()) { toast("A aba Novo protocolo é exclusiva do User1", true); return (location.hash = home); }
+    if (me.role === "dev" && (name === "historico" || name === "contatos")) return (location.hash = home);
+    if (name === "novo" && !canNew()) { toast("A aba Novo protocolo é exclusiva do Protocolo", true); return (location.hash = home); }
     if (!views[name]) return (location.hash = home);
     await views[name](arg);
   } catch (e) {
@@ -542,16 +538,16 @@ async function route() {
 addEventListener("hashchange", route);
 addEventListener("hashchange", revokePv);
 
-// Conta criada mas ainda sem função: aguarda o dev definir (User1, User2 ou User3).
+// Conta criada mas ainda sem função: aguarda o dev definir (Protocolo, Revisão ou Despacho).
 function noRoleView() {
   clearInterval(timer);
-  $("#app").innerHTML = `<div class="login"><div class="panel"><img class="mark" src="protoweb.svg" alt="" width="64" height="64"><h1>ProtoWeb</h1><p class="org-l">${esc(org.name)}</p><p>Olá, <b>${esc(me.name)}</b>! Sua conta foi criada, mas ainda <b>não tem função</b> no sistema.</p><p class="muted">Peça ao dev para definir a sua função (User1, User2 ou User3) e depois clique em “Verificar de novo”.</p><div class="acts2" style="justify-content:center"><button class="btn" id="re">Verificar de novo</button><button class="btn sec" id="out2">Sair</button></div></div></div>`;
+  $("#app").innerHTML = `<div class="login"><div class="panel"><img class="mark" src="protoweb.svg" alt="" width="64" height="64"><h1>ProtoWeb</h1><p class="org-l">${esc(org.name)}</p><p>Olá, <b>${esc(me.name)}</b>! Sua conta foi criada, mas ainda <b>não tem função</b> no sistema.</p><p class="muted">Peça ao dev para definir a sua função (Protocolo, Revisão ou Despacho) e depois clique em “Verificar de novo”.</p><div class="acts2" style="justify-content:center"><button class="btn" id="re">Verificar de novo</button><button class="btn sec" id="out2">Sair</button></div></div></div>`;
   $("#re").onclick = guard(() => boot(auth.currentUser)); $("#out2").onclick = logout;
 }
 async function boot(user) {
   try {
     const r = await api("/api/me");
-    if (!r.user) { me = null; org = null; return onboardingView(user); }
+    if (!r.user) { me = null; org = null; return onboardingView(user, !!r.first_run); }
     me = r.user; org = r.org; await loadLogo();
     if (!staff()) return noRoleView();
     route(); startNotifications();
