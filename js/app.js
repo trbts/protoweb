@@ -444,7 +444,10 @@ const views = {
       : `<div class="panel act"><h2>Documento a enviar ao setor</h2>${prevBox(prev, "Recebido de")}<form id="ff"><div class="field"><label for="fs">Assunto</label><input id="fs" required maxlength="200"></div>
         <div class="field"><label for="fd">Descrição</label><textarea id="fd" maxlength="5000" placeholder="Ex.: Favor responder em até 10 dias."></textarea></div>
         <div class="field"><label class="chk"><input type="checkbox" id="fo"> Ofício protocolado</label></div>
-        ${pdfField("ffa", "Documento (PDF; pode anexar mais de um)", { multiple: true, required: true })}
+        <div class="field"><label>Documentos que seguem no link</label>
+          <label class="chk"><input type="checkbox" id="fip" ${orig.some((f) => f.holder === "u1") ? "" : "disabled"}> Documento do Protocolo (${orig.filter((f) => f.holder === "u1").length} PDF)</label>
+          <label class="chk"><input type="checkbox" id="fid" checked> Documento do Despacho (anexar abaixo)</label></div>
+        <div id="fdw">${pdfField("ffa", "PDF do Despacho (pode anexar mais de um)", { multiple: true })}</div>
         <div class="field"><label>Enviar para (setor / contato)</label>${ctList(active, "fct")}</div>
         <p class="muted">Ao finalizar, o sistema cria um link com o documento, válido por 7 dias, para você enviar pelo WhatsApp. O setor pode responder pela mesma página.</p>
         <button class="btn">Finalizar e gerar link</button></form></div>`) : "";
@@ -474,16 +477,17 @@ const views = {
     bindFiles($("main")); poll();
     if ($("#dp")) $("#dp").onclick = () => confirmDo("Excluir este protocolo, os arquivos e o histórico definitivamente? Não dá para desfazer.", async () => { await api("/api/protocols/" + pid, { method: "DELETE" }); toast("Protocolo excluído"); location.hash = "#/central/protocolos"; });
     const afterSend = (r) => { route(); showLinks(r.results, r.subject || p.subject); };
+    if ($("#fid")) $("#fid").onchange = () => { $("#fdw").hidden = !$("#fid").checked; };
     if ($("#ff")) $("#ff").onsubmit = (e) => {
       e.preventDefault();
       const ids = s === 3 ? [...document.querySelectorAll("[name=fct]:checked")].map((c) => +c.value) : [];
       if (s === 3 && !ids.length) return toast("Selecione ao menos um setor/contato", true);
       confirmDo(s === 2 ? "Encaminhar ao Despacho? Essa ação não pode ser desfeita." : `Finalizar e gerar o link para ${ids.length} setor(es)? Essa ação não pode ser desfeita.`, async () => {
         if (s === 2) { await api(`/api/protocols/${pid}/forward`, { method: "POST", body: { comment: $("#fc").value } }); poll(); toast("Encaminhado ao Despacho"); location.hash = "#/central/protocolos"; return; }
-        const file_ids = await uploadFiles($("#ffa"));
-        if (!file_ids.length) throw new Error("Anexe o PDF do documento");
+        const file_ids = $("#fid").checked ? await uploadFiles($("#ffa")) : [];
+        if (!file_ids.length && !$("#fip").checked) throw new Error("Marque o documento do Protocolo ou anexe o PDF do Despacho");
         const subject = $("#fs").value;
-        const r = await api(`/api/protocols/${pid}/forward`, { method: "POST", body: { subject, description: $("#fd").value, oficio_protocolado: $("#fo").checked, file_ids, contact_ids: ids } });
+        const r = await api(`/api/protocols/${pid}/forward`, { method: "POST", body: { subject, description: $("#fd").value, oficio_protocolado: $("#fo").checked, include_protocol: $("#fip").checked, file_ids, contact_ids: ids } });
         poll(); afterSend({ ...r, subject });
       });
     };
