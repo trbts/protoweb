@@ -342,3 +342,13 @@ input.code{text-transform:uppercase;letter-spacing:2px}
 .pbar2{height:8px;background:#eee9f6;border-radius:99px;overflow:hidden;margin-top:6px}
 .pbar2 i{display:block;height:100%;background:linear-gradient(90deg,#e8286f,#a68fe3);border-radius:99px}
 .sech:first-child{margin-top:0}
+
+/* alinhamento dos cards */
+.frow3{display:grid;grid-template-columns:minmax(0,1fr) 150px 120px minmax(0,1fr);gap:14px}
+@media(max-width:700px){.frow3{grid-template-columns:1fr 1fr}}
+.checks label{align-items:flex-start;border:1px solid var(--line,#d9dee7);border-radius:10px;padding:10px 12px;background:#fff}
+.checks .ctx{display:flex;flex-direction:column;gap:2px;min-width:0;overflow-wrap:anywhere}
+.checks .ctx small{font-size:13px}
+.checks input{margin-top:3px;flex:none}
+.cfg .col{display:flex;flex-direction:column;gap:18px;min-width:0}
+.cfg .col .panel{margin-bottom:0}
