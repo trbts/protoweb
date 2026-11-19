@@ -344,7 +344,7 @@ input.code{text-transform:uppercase;letter-spacing:2px}
 .sech:first-child{margin-top:0}
 
 /* alinhamento dos cards */
-.frow3{display:grid;grid-template-columns:minmax(0,1fr) 150px 120px minmax(0,1fr);gap:14px}
+.frow3{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) 160px 130px;gap:14px}
 @media(max-width:700px){.frow3{grid-template-columns:1fr 1fr}}
 .checks label{align-items:flex-start;border:1px solid var(--line,#d9dee7);border-radius:10px;padding:10px 12px;background:#fff}
 .checks .ctx{display:flex;flex-direction:column;gap:2px;min-width:0;overflow-wrap:anywhere}
@@ -352,3 +352,5 @@ input.code{text-transform:uppercase;letter-spacing:2px}
 .checks input{margin-top:3px;flex:none}
 .cfg .col{display:flex;flex-direction:column;gap:18px;min-width:0}
 .cfg .col .panel{margin-bottom:0}
+.chk{display:flex;gap:8px;align-items:center;font-weight:600}.chk input{width:auto;margin:0}
+.track{text-align:center;margin:16px 0 0}.track a{color:var(--pri-d);font-weight:600}
