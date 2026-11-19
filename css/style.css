@@ -354,3 +354,4 @@ input.code{text-transform:uppercase;letter-spacing:2px}
 .cfg .col .panel{margin-bottom:0}
 .chk{display:flex;gap:8px;align-items:center;font-weight:600}.chk input{width:auto;margin:0}
 .track{text-align:center;margin:16px 0 0}.track a{color:var(--pri-d);font-weight:600}
+.cfg .wide{grid-column:1/-1}.cfg .wide .panel{margin-bottom:0}
