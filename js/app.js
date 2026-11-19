@@ -254,7 +254,7 @@ async function poll() {
   } catch { /* tenta de novo no próximo ciclo */ }
 }
 function startNotifications() { clearInterval(timer); badge = null; poll(); timer = setInterval(poll, 20000); }
-async function logout() { clearInterval(timer); signOut(auth); }
+async function logout() { clearInterval(timer); location.hash = ""; signOut(auth); }
 
 // ---------- fluxo de tramitação: funções de apoio
 const STEP = { u1: "Protocolo", u2: "Análise", u3: "Despacho", sector: "Setor" };
@@ -582,10 +582,10 @@ async function route() {
     if (!h[0]) return (location.hash = home);
     let name = h[0], arg = h[1];
     if (name === "central") { name = ["protocolos", "novo", "contatos", "usuarios", "dev"].includes(h[1]) ? h[1] : (me.role === "dev" ? "usuarios" : "protocolos"); arg = undefined; }
-    if ((name === "usuarios" || name === "dev") && me.role !== "dev") { toast("Acesso restrito ao dev", true); return (location.hash = home); }
+    if ((name === "usuarios" || name === "dev") && me.role !== "dev") return (location.hash = home);
     if (me.role === "dev" && (name === "historico" || name === "contatos" || name === "protocolos")) return (location.hash = home);
     if (name === "contatos" && me.step !== 3) return (location.hash = home);
-    if (name === "novo" && !canNew()) { toast("A aba Novo protocolo é exclusiva do Protocolo", true); return (location.hash = home); }
+    if (name === "novo" && !canNew()) return (location.hash = home);
     if (!views[name]) return (location.hash = home);
     await views[name](arg);
   } catch (e) {
