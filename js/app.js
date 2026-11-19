@@ -161,7 +161,7 @@ function shell(inner, active) {
   document.querySelectorAll("img.avatar").forEach((i) => (i.onerror = () => i.replaceWith(Object.assign(document.createElement("span"), { className: "avatar", innerHTML: ICON.user }))));
   paintBadge();
 }
-// Login por e-mail e senha e cadastro de novos usuários. Quem se cadastra fica sem função até o dev definir (Protocolo, Revisão ou Despacho), em Usuários.
+// Login por e-mail e senha e cadastro de novos usuários. Quem se cadastra fica sem função até o dev definir (Protocolo, Análise ou Despacho), em Usuários.
 let regBusy = false;
 const AUTH_ERR = { "auth/invalid-credential": "E-mail ou senha incorretos.", "auth/invalid-login-credentials": "E-mail ou senha incorretos.", "auth/wrong-password": "E-mail ou senha incorretos.", "auth/user-not-found": "E-mail ou senha incorretos.", "auth/invalid-email": "E-mail inválido.", "auth/email-already-in-use": "Este e-mail já está cadastrado. Use a aba Entrar.", "auth/weak-password": "A senha deve ter pelo menos 6 caracteres.", "auth/too-many-requests": "Muitas tentativas. Aguarde alguns minutos e tente de novo.", "auth/network-request-failed": "Sem conexão. Tente novamente.", "auth/operation-not-allowed": "O login por e-mail e senha não está ativado no Firebase.", "auth/user-disabled": "Esta conta foi desativada." };
 const authErr = (e) => (e.code ? AUTH_ERR[e.code] || "Não foi possível concluir (" + e.code + ")." : e.message);
@@ -257,13 +257,13 @@ function startNotifications() { clearInterval(timer); badge = null; poll(); time
 async function logout() { clearInterval(timer); signOut(auth); }
 
 // ---------- fluxo de tramitação: funções de apoio
-const STEP = { u1: "Protocolo", u2: "Revisão", u3: "Despacho", sector: "Setor" };
-const RS = { u2: "Com a Revisão", u1: "Com o Protocolo (arquivar)", done: "Encerrada (arquivada)" };
+const STEP = { u1: "Protocolo", u2: "Análise", u3: "Despacho", sector: "Setor" };
+const RS = { u2: "Com a Análise", u1: "Com o Protocolo (arquivar)", done: "Encerrada (arquivada)" };
 const staff = () => me.role === "dev" || me.step > 0;
 const canNew = () => me.step === 1;
 const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const fmtWa = (p) => (p ? `+${p.slice(0, 2)} (${p.slice(2, 4)}) ${p.slice(4, -4)}-${p.slice(-4)}` : "—");
-const stageChip = (p) => p.stage === "u2" ? '<span class="chip u">Com a Revisão</span>' : p.stage === "u3" ? '<span class="chip u">Com o Despacho</span>'
+const stageChip = (p) => p.stage === "u2" ? '<span class="chip u">Com a Análise</span>' : p.stage === "u3" ? '<span class="chip u">Com o Despacho</span>'
   : p.nrec && p.nclosed === p.nrec ? '<span class="chip respondido">Encerrado</span>' : p.nback ? '<span class="chip visualizado">Resposta em retorno</span>' : '<span class="chip recebido">Aguardando setor</span>';
 const countsOf = (p, recs) => ({ ...p, nrec: recs.length, nback: recs.filter((r) => ["u2", "u1"].includes(r.return_stage) || r.replied).length, nclosed: recs.filter((r) => r.closed_at).length });
 // Situação de um setor/contato: encerrado sem resposta, resposta em retorno, falha no envio ou aguardando o setor.
@@ -296,7 +296,7 @@ function stepLi(st, p, sectorName, files = []) {
 }
 const stepsPanel = (title, list, p, sectorName, files) => list.length ? `<section class="panel"><h2>${title}</h2><ol class="stp">${list.map((x) => stepLi(x, p, sectorName, files)).join("")}</ol></section>` : "";
 const legPanels = (steps, p, sectorName, files) => stepsPanel("Envio ao setor por link", steps.filter((x) => x.leg === "ida"), p, sectorName, files)
-  + stepsPanel("Retorno da resposta: Setor → Despacho → Revisão → Protocolo", steps.filter((x) => x.leg === "volta"), p, sectorName, files);
+  + stepsPanel("Retorno da resposta: Setor → Despacho → Análise (arquivo)", steps.filter((x) => x.leg === "volta"), p, sectorName, files);
 
 // Links gerados pelo Despacho: copiar e enviar pelo WhatsApp.
 function showLinks(results, subject) {
@@ -310,7 +310,7 @@ function showLinks(results, subject) {
 
 const views = {
   async config() {
-    const F = { dev: "Dev", user1: "Protocolo", user2: "Revisão", user3: "Despacho", nenhuma: "Sem função" }, dev = me.role === "dev";
+    const F = { dev: "Dev", user1: "Protocolo", user2: "Análise", user3: "Despacho", nenhuma: "Sem função" }, dev = me.role === "dev";
     const o = dev ? await api("/api/org") : null;
     const mb = (b) => (b / 1048576).toFixed(b < 10485760 ? 1 : 0);
     const szb = (b) => (b >= 1073741824 ? (b / 1073741824).toFixed(b % 1073741824 ? 2 : 0).replace(".", ",") + " GB" : mb(b) + " MB");
@@ -362,25 +362,25 @@ const views = {
     if (!id) return staffList("Histórico", "h", true);
     const d = await api("/api/protocols/" + id + "?h=1"), p = d.protocol, recs = d.recipients;
     const head = `<h1>${esc(p.protocol_number)} — ${esc(p.subject)}</h1><p class="muted">${stageChip(countsOf(p, recs))}${p.closed_at ? ` &nbsp; Ato encerrado em ${fmt(p.closed_at)}` : ""}</p>`;
-    const body = stepsPanel("Tramitação interna: Protocolo → Revisão → Despacho", d.steps.filter((x) => !x.recipient_id), p, "", d.files) + recs.map((r) => `<h2 class="sech">${esc(r.sector)} ${recChip(r)}</h2>` + legPanels(d.steps.filter((x) => x.recipient_id === r.rid), p, r.sector, d.files)).join("");
+    const body = stepsPanel("Tramitação interna: Protocolo → Análise → Despacho", d.steps.filter((x) => !x.recipient_id), p, "", d.files) + recs.map((r) => `<h2 class="sech">${esc(r.sector)} ${recChip(r)}</h2>` + legPanels(d.steps.filter((x) => x.recipient_id === r.rid), p, r.sector, d.files)).join("");
     shell(`<div class="hhead"><a class="backbtn" href="#/historico" title="Voltar ao histórico" aria-label="Voltar ao histórico">${ICON.back}</a><div>${head}</div></div><div class="hist">${body || `<div class="panel empty">Sem movimentações registradas.</div>`}</div>`, "h");
     poll();
   },
   async protocolos() { await staffList("Protocolos", "l"); },
-  // Novo protocolo: exclusivo do Protocolo. Sobe o PDF, registra protocolo e data e encaminha à Revisão.
+  // Novo protocolo: exclusivo do Protocolo. Sobe o PDF, registra protocolo e data e encaminha à Análise.
   async novo() {
     shell(`<h1>Novo protocolo</h1><form class="panel" id="f"><div class="frow3"><div class="field"><label for="pn">Número do protocolo</label><input id="pn" required maxlength="40" autocomplete="off" placeholder="123/2026"></div><div class="field"><label for="po">Nº do ofício</label><input id="po" maxlength="40" autocomplete="off" placeholder="Ex.: 45/2026"></div><div class="field"><label for="pd">Data</label><input id="pd" type="date" required value="${today()}"></div><div class="field"><label for="pt">Hora</label><input id="pt" type="time" required value="${new Date().toTimeString().slice(0, 5)}"></div></div><div class="field"><label for="s">Assunto</label><input id="s" required maxlength="200"></div>
     <div class="field"><label for="d">Descrição</label><textarea id="d" maxlength="5000"></textarea></div>
     ${pdfField("a", "PDF do documento (pode anexar mais de um)", { multiple: true, required: true })}
-    <p class="muted">Ao enviar, o documento é encaminhado à Revisão. Os PDFs ficam guardados na nuvem e acompanham o ato até o encerramento.</p>
-    <button class="btn">Enviar à Revisão</button></form>`, "n");
+    <p class="muted">Ao enviar, o documento é encaminhado à Análise. Os PDFs ficam guardados na nuvem e acompanham o ato até o encerramento.</p>
+    <button class="btn">Enviar à Análise</button></form>`, "n");
     $("#f").onsubmit = (e) => {
       e.preventDefault();
-      confirmDo("Encaminhar este protocolo à Revisão? Essa ação não pode ser desfeita.", async () => {
+      confirmDo("Encaminhar este protocolo à Análise? Essa ação não pode ser desfeita.", async () => {
         const file_ids = await uploadFiles($("#a"));
         if (!file_ids.length) throw new Error("Anexe o PDF do documento");
         const r = await api("/api/protocols", { method: "POST", body: { protocol_number: $("#pn").value, entry_date: $("#pd").value, entry_time: $("#pt").value, oficio_number: $("#po").value, subject: $("#s").value, description: $("#d").value, file_ids } });
-        toast("Protocolo enviado à Revisão: " + r.protocol_number); location.hash = "#/central/protocolos";
+        toast("Protocolo enviado à Análise: " + r.protocol_number); location.hash = "#/central/protocolos";
       });
     };
   },
@@ -401,8 +401,8 @@ const views = {
   async usuarios() {
     if (me.role !== "dev") return (location.hash = "#/central/protocolos");
     const users = await api("/api/users");
-    const F = { dev: "Dev", user1: "Protocolo", user2: "Revisão", user3: "Despacho", nenhuma: "Sem função" };
-    shell(`<h1>Usuários</h1><p class="muted">Cada pessoa se cadastra com e-mail e senha e entra na organização com o código de convite (veja em Configurações), ficando <b>sem função</b>. Aqui você define Protocolo, Revisão ou Despacho e bloqueia acessos. Só existe um Dev: quem fez o primeiro acesso. Quem mudar de função precisa atualizar a página.</p>
+    const F = { dev: "Dev", user1: "Protocolo", user2: "Análise", user3: "Despacho", nenhuma: "Sem função" };
+    shell(`<h1>Usuários</h1><p class="muted">Cada pessoa se cadastra com e-mail e senha e entra na organização com o código de convite (veja em Configurações), ficando <b>sem função</b>. Aqui você define Protocolo, Análise ou Despacho e bloqueia acessos. Só existe um Dev: quem fez o primeiro acesso. Quem mudar de função precisa atualizar a página.</p>
     <div class="wrap"><table><tr><th>Nome</th><th>E-mail</th><th>Função</th><th>Acesso</th><th></th></tr>${users.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${F[u.funcao] || "Sem função"}</td><td>${u.active ? "Ativo" : "Bloqueado"}</td><td class="nw"><button class="btn sec sm" data-u="${u.id}">Editar</button>${u.id !== me.id ? ` <button class="btn sec sm" data-del="${u.id}">Excluir</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">Nenhum usuário.</td></tr>`}</table></div>`, "u");
     document.querySelectorAll("[data-del]").forEach((b) => (b.onclick = () => {
       const u = users.find((x) => x.id == b.dataset.del);
@@ -410,7 +410,7 @@ const views = {
     }));
     document.querySelectorAll("[data-u]").forEach((b) => (b.onclick = () => {
       const u = users.find((x) => x.id == b.dataset.u), self = u.id === me.id;
-      dialog(`<h2>${esc(u.name)}</h2><div class="field"><label for="ust">Função</label><select id="ust" ${self ? "disabled" : ""}><option value="nenhuma">Sem função</option>${[["user1", "Protocolo — Upload, protocolo inicial e encaminhamento"], ["user2", "Revisão — Análise, comentários e encaminhamento"], ["user3", "Despacho — Anotação, envio ao setor por e-mail e registro da resposta"], ["dev", "Dev — acesso total (único)"]].filter(([v]) => v !== "dev" || u.funcao === "dev").map(([v, t]) => `<option value="${v}" ${u.funcao === v ? "selected" : ""}>${t}</option>`).join("")}</select></div><label class="checks"><span><input type="checkbox" id="ua" ${u.active ? "checked" : ""}> Acesso ao sistema ativo</span></label>`, { ok: "Salvar", onOk: async () => {
+      dialog(`<h2>${esc(u.name)}</h2><div class="field"><label for="ust">Função</label><select id="ust" ${self ? "disabled" : ""}><option value="nenhuma">Sem função</option>${[["user1", "Protocolo — Upload, protocolo inicial e encaminhamento"], ["user2", "Análise — Análise, comentários e encaminhamento"], ["user3", "Despacho — Anotação, envio ao setor por e-mail e registro da resposta"], ["dev", "Dev — acesso total (único)"]].filter(([v]) => v !== "dev" || u.funcao === "dev").map(([v, t]) => `<option value="${v}" ${u.funcao === v ? "selected" : ""}>${t}</option>`).join("")}</select></div><label class="checks"><span><input type="checkbox" id="ua" ${u.active ? "checked" : ""}> Acesso ao sistema ativo</span></label>`, { ok: "Salvar", onOk: async () => {
         await api("/api/users/" + u.id, { method: "PUT", body: { active: $("#ua").checked, role: $("#ust").value } });
         toast("Alterações salvas. A pessoa precisa atualizar a página."); route();
       } });
@@ -420,7 +420,7 @@ const views = {
   async dev() {
     if (me.role !== "dev") return (location.hash = "#/central/protocolos");
     const ops = [["contatos", "Apagar todos os contatos"], ["usuarios", "Apagar todos os usuários (menos o seu)"], ["tudo", "Apagar tudo: protocolos, contatos e usuários (menos o seu)"]];
-    const F = { dev: "Dev", user1: "Protocolo", user2: "Revisão", user3: "Despacho", nenhuma: "Sem função" };
+    const F = { dev: "Dev", user1: "Protocolo", user2: "Análise", user3: "Despacho", nenhuma: "Sem função" };
     const wusers = await api("/api/users");
     shell(`<h1>Dev · Limpeza de dados</h1><p class="muted">Ações permanentes e sem volta. Para confirmar, digite APAGAR. Usuários apagados podem se cadastrar de novo; para remover também a conta de login, apague-a no Firebase (Authentication → Users). Excluir um protocolo isolado é feito na tela do próprio protocolo.</p>
     <div class="panel"><h2>Apagar protocolos (com arquivos e históricos)</h2>
@@ -448,7 +448,7 @@ const views = {
       } });
     }));
   },
-  // Painel do protocolo: documento, ação da etapa (Revisão/Despacho/Protocolo) e situação de cada setor/contato.
+  // Painel do protocolo: documento, ação da etapa (Análise/Despacho/Protocolo) e situação de cada setor/contato.
   async protocolo(pid) {
     const [d, cts] = await Promise.all([api("/api/protocols/" + pid), api("/api/contacts")]);
     contacts = cts;
@@ -467,7 +467,6 @@ const views = {
       ? `<div class="panel act"><h2>Análise e encaminhamento ao Despacho</h2>${prevBox(prev, "Recebido de")}<form id="ff"><div class="field"><label for="fs">Assunto</label><input id="fs" required maxlength="200"></div><div class="field"><label for="fd">Descrição</label><textarea id="fd" maxlength="5000"></textarea></div><p class="muted">O assunto e a descrição abaixo serão vistos somente pelo Despacho.</p><button class="btn">Encaminhar ao Despacho</button></form></div>`
       : `<div class="panel act"><h2>Documento a enviar ao setor</h2>${prevBox(prev, "Recebido de")}<form id="ff"><div class="field"><label for="fs">Assunto</label><input id="fs" required maxlength="200" value="${esc(p.subject)}"></div>
         <div class="field"><label for="fd">Descrição</label><textarea id="fd" maxlength="5000" placeholder="Ex.: Favor responder em até 10 dias.">${esc(p.description || "")}</textarea></div>
-        <div class="field"><label class="chk"><input type="checkbox" id="fo"> Ofício protocolado</label></div>
         <div class="field"><label>Documentos que seguem no link</label>
           <label class="chk"><input type="checkbox" id="fip" ${orig.some((f) => f.holder === "u1") ? "" : "disabled"}> Documento do Protocolo (${orig.filter((f) => f.holder === "u1").length} PDF)</label>
           <label class="chk"><input type="checkbox" id="fid" checked> Documento do Despacho (anexar abaixo)</label></div>
@@ -477,18 +476,18 @@ const views = {
         <button class="btn">Finalizar e gerar link</button></form></div>`) : "";
     const back = recs.filter((r) => ["u1", "u2"].includes(r.return_stage) && (dev || r.return_stage === "u" + me.step)).map((r) => {
       const rs = +r.return_stage.slice(1), reply = steps.filter((x) => x.recipient_id === r.rid && x.leg === "volta" && x.holder === "sector").pop(), last = steps.filter((x) => x.recipient_id === r.rid && x.leg === "volta" && x.exited_at).pop();
-      return `<div class="panel act"><h2>Resposta de ${esc(r.sector)} — ${rs === 1 ? "receber e arquivar" : "encaminhar ao Protocolo"}</h2>${prevBox(last, rs === 2 ? "Resposta registrada por" : "Recebido de")}${fileList(files.filter((f) => reply && f.step_id === reply.id))}<form data-ret="${r.rid}" data-s="${rs}">${commentField("r" + r.rid, rs === 1 ? "Comentário do arquivamento (opcional)" : "Comentário (opcional)")}<button class="btn">${rs === 1 ? "Receber e arquivar" : "Encaminhar ao Protocolo"}</button></form></div>`;
+      return `<div class="panel act"><h2>Resposta de ${esc(r.sector)} — ${rs === 1 ? "receber e arquivar" : "arquivar"}</h2>${prevBox(last, rs === 2 ? "Resposta registrada por" : "Recebido de")}${fileList(files.filter((f) => reply && f.step_id === reply.id))}<form data-ret="${r.rid}" data-s="${rs}">${commentField("r" + r.rid, "Descrição")}<button class="btn">${rs === 1 ? "Receber e arquivar" : "Arquivar"}</button></form></div>`;
     }).join("");
     const rows = recs.map((r) => {
       const open = r.sent_at && !r.closed_at && !r.return_stage && !r.replied;
-      const acts = can3 && open ? `<button class="btn sm" data-lk="${r.rid}">Link / WhatsApp</button><button class="btn sec sm" data-noreply="${r.rid}">Setor informou que não precisa</button>` : "";
+      const acts = can3 && open ? `<button class="btn sm" data-lk="${r.rid}">Link / WhatsApp</button>` : "";
       const exp = r.share ? `<div class="muted">${new Date(r.share.expires_at) < new Date() ? "Link expirado em " : "Link válido até "}${fmt(r.share.expires_at)}</div>` : "";
       return `<tr><td>${esc(r.sector)}${r.whatsapp ? `<div class="muted">${esc(fmtWa(r.whatsapp))}</div>` : ""}</td><td>${two(r.sent_at)}</td><td>${recChip(r)}${open ? exp : ""}</td>${can3 ? `<td><div class="acts3">${acts}</div></td>` : ""}</tr>`;
     }).join("");
     const rpl = can3 ? recs.filter((r) => r.replied).map((r) => {
       const reply = steps.filter((x) => x.recipient_id === r.rid && x.leg === "volta" && x.holder === "sector").pop();
       return `<div class="panel act"><h2>Resposta de ${esc(r.sector)}</h2><div class="msg"><small><b>${esc(r.share.reply_name)}</b> · ${fmt(r.share.replied_at)}</small>${r.share.reply_text ? `<div style="white-space:pre-wrap">${esc(r.share.reply_text)}</div>` : ""}</div>${fileList(files.filter((f) => reply && f.step_id === reply.id))}
-        <form data-rt="${r.rid}">${commentField("t" + r.rid, "Comentário para o próximo (opcional)")}<div class="acts2"><button class="btn" data-to="u2">Encaminhar à Revisão</button><button class="btn sec" data-to="u1">Encaminhar ao Protocolo (arquivar)</button></div></form></div>`;
+        <form data-rt="${r.rid}">${commentField("t" + r.rid, "Descrição")}<div class="acts2"><button class="btn" data-to="done">Arquivar</button><button class="btn sec" data-to="u2">Encaminhar à Análise</button></div></form></div>`;
     }).join("") : "";
     const secs = recs.length ? `<div class="panel"><h2>Setores / contatos</h2><div class="wrap"><table><tr><th>Setor / contato</th><th>Link enviado em</th><th>Situação</th>${can3 ? "<th>Ações do Despacho</th>" : ""}</tr>${rows}</table></div>${can3 ? `<p class="muted">Quando o setor responde pelo link, a resposta aparece aqui para você encaminhar.</p>` : ""}</div>` : "";
     const others = active.filter((c) => !recs.some((r) => r.contact_id === c.id));
@@ -511,7 +510,7 @@ const views = {
         const file_ids = $("#fid").checked ? await uploadFiles($("#ffa")) : [];
         if (!file_ids.length && !$("#fip").checked) throw new Error("Marque o documento do Protocolo ou anexe o PDF do Despacho");
         const subject = $("#fs").value;
-        const r = await api(`/api/protocols/${pid}/forward`, { method: "POST", body: { subject, description: $("#fd").value, oficio_protocolado: $("#fo").checked, include_protocol: $("#fip").checked, file_ids, contact_ids: ids } });
+        const r = await api(`/api/protocols/${pid}/forward`, { method: "POST", body: { subject, description: $("#fd").value, include_protocol: $("#fip").checked, file_ids, contact_ids: ids } });
         poll(); afterSend({ ...r, subject });
       });
     };
@@ -532,30 +531,24 @@ const views = {
     document.querySelectorAll("form[data-rt] button[data-to]").forEach((b) => (b.onclick = (e) => {
       e.preventDefault();
       const rid = b.closest("form").dataset.rt, to = b.dataset.to;
-      confirmDo(to === "u1" ? "Encaminhar a resposta ao Protocolo para arquivar?" : "Encaminhar a resposta à Revisão?", async () => {
+      confirmDo(to === "done" ? "Arquivar esta resposta? O ciclo deste setor será encerrado." : "Encaminhar a resposta à Análise?", async () => {
         await api(`/api/recipients/${rid}/route`, { method: "POST", body: { to, comment: $("#t" + rid + "c").value } });
-        toast("Resposta encaminhada"); poll(); route();
+        toast(to === "done" ? "Resposta arquivada" : "Resposta encaminhada"); poll(); route();
       });
     }));
     document.querySelectorAll("[data-resp]").forEach((b) => (b.onclick = () => {
       const r = recs.find((x) => x.rid == b.dataset.resp);
-      dialog(`<h2>Setor respondeu — ${esc(r.sector)}</h2><p class="muted">Anexe o PDF recebido (por outro meio, fora do link). A resposta segue à Revisão e depois ao Protocolo, que arquiva.</p>${commentField("x")}${pdfField("xf", "PDF da resposta", { multiple: true, required: true })}`, { ok: "Registrar resposta", onOk: async () => {
+      dialog(`<h2>Setor respondeu — ${esc(r.sector)}</h2><p class="muted">Anexe o PDF recebido (por outro meio, fora do link). A resposta segue à Análise e depois ao Protocolo, que arquiva.</p>${commentField("x")}${pdfField("xf", "PDF da resposta", { multiple: true, required: true })}`, { ok: "Registrar resposta", onOk: async () => {
         const file_ids = await uploadFiles($("#xf"));
         if (!file_ids.length) throw new Error("Anexe o PDF da resposta");
-        await api(`/api/recipients/${r.rid}/response`, { method: "POST", body: { comment: $("#xc").value, file_ids } }); toast("Resposta registrada e encaminhada à Revisão"); poll(); route();
-      } });
-    }));
-    document.querySelectorAll("[data-noreply]").forEach((b) => (b.onclick = () => {
-      const r = recs.find((x) => x.rid == b.dataset.noreply);
-      dialog(`<h2>Não precisa de resposta — ${esc(r.sector)}</h2><p>O setor informou que o documento não necessita de resposta. O ato será encerrado para este contato e isso fica registrado no histórico.</p>${commentField("z")}`, { ok: "Encerrar para este contato", onOk: async () => {
-        await api(`/api/recipients/${r.rid}/no-reply`, { method: "POST", body: { comment: $("#zc").value } }); toast("Encerrado: o setor não precisa responder"); poll(); route();
+        await api(`/api/recipients/${r.rid}/response`, { method: "POST", body: { comment: $("#xc").value, file_ids } }); toast("Resposta registrada e encaminhada à Análise"); poll(); route();
       } });
     }));
     document.querySelectorAll("[data-ret]").forEach((f) => (f.onsubmit = (e) => {
       e.preventDefault(); const id = f.dataset.ret, rs = +f.dataset.s, body = { comment: $("#r" + id + "c").value };
-      confirmDo(rs === 1 ? "Receber e arquivar a resposta?" : "Encaminhar ao Protocolo? Essa ação não pode ser desfeita.", async () => {
+      confirmDo("Arquivar a resposta? O ciclo deste setor será encerrado.", async () => {
         await api(`/api/recipients/${id}/advance`, { method: "POST", body });
-        toast(rs === 1 ? "Resposta arquivada" : "Resposta encaminhada ao Protocolo"); poll(); route();
+        toast("Resposta arquivada"); poll(); route();
       });
     }));
   },
@@ -563,7 +556,7 @@ const views = {
 
 // Lista de protocolos (por ato administrativo).
 async function staffList(title, active, hist = false) {
-  const ETAPAS = [["mine", "Aguardando minha ação"], ["u2", "Com a Revisão"], ["u3", "Com o Despacho"], ["sector", "Aguardando setor"], ["volta", "Resposta em retorno"], ["done", "Encerrados"]];
+  const ETAPAS = [["mine", "Aguardando minha ação"], ["u2", "Com a Análise"], ["u3", "Com o Despacho"], ["sector", "Aguardando setor"], ["volta", "Resposta em retorno"], ["done", "Encerrados"]];
   contacts = await api("/api/contacts");
   shell(`<h1>${title}</h1><form class="panel filters c" id="ff"><div><label for="q">Número ou assunto</label><input id="q"></div>
     <div><label for="sc">Setor / contato</label><select id="sc"><option value="">Todos</option>${contacts.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select></div>
@@ -604,10 +597,10 @@ async function route() {
 addEventListener("hashchange", route);
 addEventListener("hashchange", revokePv);
 
-// Conta criada mas ainda sem função: aguarda o dev definir (Protocolo, Revisão ou Despacho).
+// Conta criada mas ainda sem função: aguarda o dev definir (Protocolo, Análise ou Despacho).
 function noRoleView() {
   clearInterval(timer);
-  $("#app").innerHTML = `<div class="login"><div class="panel"><img class="mark" src="protoweb.svg" alt="" width="64" height="64"><h1>ProtoWeb</h1><p class="org-l">${esc(org.name)}</p><p>Olá, <b>${esc(me.name)}</b>! Sua conta foi criada, mas ainda <b>não tem função</b> no sistema.</p><p class="muted">Peça ao dev para definir a sua função (Protocolo, Revisão ou Despacho) e depois clique em “Verificar de novo”.</p><div class="acts2" style="justify-content:center"><button class="btn" id="re">Verificar de novo</button><button class="btn sec" id="out2">Sair</button></div></div></div>`;
+  $("#app").innerHTML = `<div class="login"><div class="panel"><img class="mark" src="protoweb.svg" alt="" width="64" height="64"><h1>ProtoWeb</h1><p class="org-l">${esc(org.name)}</p><p>Olá, <b>${esc(me.name)}</b>! Sua conta foi criada, mas ainda <b>não tem função</b> no sistema.</p><p class="muted">Peça ao dev para definir a sua função (Protocolo, Análise ou Despacho) e depois clique em “Verificar de novo”.</p><div class="acts2" style="justify-content:center"><button class="btn" id="re">Verificar de novo</button><button class="btn sec" id="out2">Sair</button></div></div></div>`;
   $("#re").onclick = guard(() => boot(auth.currentUser)); $("#out2").onclick = logout;
 }
 async function boot(user) {
