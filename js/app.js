@@ -44,6 +44,7 @@ let routeGen = 0;           // muda a cada navegação: respostas atrasadas de t
 class Stale extends Error { constructor() { super(""); this.stale = true; } }
 async function api(path, { method = "GET", body, raw, headers: extra, blob, quiet } = {}) {
   const gen = routeGen, isGet = method === "GET" && !quiet;
+  if (!auth.currentUser) throw new Stale(); // sessão encerrada (ex.: logoff em andamento): descarta em silêncio
   if (!quiet) { busy++; $("#bar").hidden = false; }
   try {
     const headers = { Authorization: "Bearer " + (await auth.currentUser.getIdToken()), ...extra };
@@ -254,7 +255,10 @@ async function poll() {
   } catch { /* tenta de novo no próximo ciclo */ }
 }
 function startNotifications() { clearInterval(timer); badge = null; poll(); timer = setInterval(poll, 20000); }
-async function logout() { clearInterval(timer); location.hash = ""; signOut(auth); }
+async function logout() {
+  clearInterval(timer); routeGen++; me = null; org = null; // zera antes de sair: nenhuma tela tenta chamar a API sem sessão
+  try { await signOut(auth); } finally { location.hash = ""; }
+}
 
 // ---------- fluxo de tramitação: funções de apoio
 const STEP = { u1: "Protocolo", u2: "Análise", u3: "Despacho", sector: "Setor" };
@@ -279,7 +283,7 @@ const waText = (subject, link) => `Olá! ${org.name} enviou um documento: ${subj
 
 // Uma passagem do documento (histórico de movimentações). Protocolo na ida: a entrada é a data do protocolo; nos demais, a data do recebimento.
 // O "setor" é externo: a ida é o link enviado pelo Despacho e a volta é a resposta registrada por ele.
-function stepLi(st, p, sectorName, files = []) {
+function stepLi(st, p, sectorName, files = [], ctx = {}) {
   const person = st.author || st.viewer, u1 = st.holder === "u1" && st.leg === "ida", sec = st.holder === "sector", back = st.leg === "volta";
   const lines = [];
   if (u1) lines.push(`Entrada (data do protocolo): ${fmtDay(p.entry_date)}`);
@@ -288,15 +292,23 @@ function stepLi(st, p, sectorName, files = []) {
   if (!sec) lines.push(st.viewed_at ? `Recebido em ${fmt(st.viewed_at)}${st.viewer ? " por " + esc(st.viewer) : ""}` : st.entered_at && !st.exited_at ? "Aguardando recebimento" : "");
   if (sec && !back) lines.push(st.viewed_at ? `Recebido pelo destinatário em ${fmt(st.viewed_at)} (link aberto)` : !st.exited_at ? "Aguardando o destinatário abrir o link" : "");
   if (sec && !back && !st.exited_at) lines.push("Aguardando o retorno do setor");
-  if (st.exited_at) lines.push(`${sec && back ? "Resposta recebida em" : sec ? "Encerrado em" : st.holder === "u1" && back ? "Arquivado em" : "Encaminhado em"} ${fmt(st.exited_at)}`);
-  if (sec && person && st.exited_at) lines.push(`Registrado por ${esc(person)}`);
+  // No card contínuo do setor, a saída do link só aparece quando o envio foi encerrado sem resposta (se houve resposta, o passo seguinte mostra).
+  const quietExit = sec && !back && !ctx.noReply;
+  if (st.exited_at && !quietExit) lines.push(`${ctx.last ? "Arquivado em" : sec && back ? "Resposta recebida em" : sec ? "Encerrado sem resposta em" : st.holder === "u1" && back ? "Arquivado em" : "Encaminhado em"} ${fmt(st.exited_at)}`);
+  if (sec && person && st.exited_at && !quietExit) lines.push(`Registrado por ${esc(person)}`);
   const att = files.filter((f) => f.step_id === st.id);
   const done = !!st.exited_at, cur = !done && (!!st.entered_at || u1);
   return `<li class="${done ? "done" : cur ? "cur" : "wait"}"><span class="dot">${done ? ICON.ok : ""}</span><div><b>${sec ? esc(sectorName || "Setor") : STEP[st.holder]}${!sec && person ? ` · <span class="who2">${esc(person)}</span>` : ""}</b>${lines.filter(Boolean).map((l) => `<div class="when">${l}</div>`).join("")}${st.out_number ? `<div class="when">Protocolo registrado: <b>${esc(st.out_number)}</b> de ${fmtDay(st.out_date)}</div>` : ""}${att.length ? `<div class="when">Anexo(s): ${att.map((f) => esc(f.file_name)).join("; ")}</div>` : ""}${st.comment ? `<div class="msg"><div style="white-space:pre-wrap">${esc(st.comment)}</div></div>` : ""}</div></li>`;
 }
 const stepsPanel = (title, list, p, sectorName, files) => list.length ? `<section class="panel"><h2>${title}</h2><ol class="stp">${list.map((x) => stepLi(x, p, sectorName, files)).join("")}</ol></section>` : "";
-const legPanels = (steps, p, sectorName, files) => stepsPanel("Envio ao setor por link", steps.filter((x) => x.leg === "ida"), p, sectorName, files)
-  + stepsPanel("Retorno da resposta: Setor → Despacho → Análise (arquivo)", steps.filter((x) => x.leg === "volta"), p, sectorName, files);
+// Card único por setor: link enviado → resposta → Despacho → Análise/Protocolo → encerramento, em uma linha do tempo contínua.
+function sectorPanel(r, list, p, files) {
+  const noReply = r.closed_reason === "sem_resposta";
+  const lastId = r.closed_at && !noReply ? list.filter((x) => x.leg === "volta" && x.exited_at).pop()?.id : null;
+  const items = list.map((x) => stepLi(x, p, r.sector, files, { noReply, last: x.id === lastId })).join("");
+  const end = r.closed_at ? `<li class="done"><span class="dot">${ICON.ok}</span><div><b>Encerrado e arquivado</b><div class="when">${noReply ? "Encerrado sem resposta do setor" : "Ciclo do setor encerrado"} em ${fmt(r.closed_at)}</div></div></li>` : "";
+  return `<section class="panel"><h2>${esc(r.sector)} ${recChip(r)}</h2><ol class="stp">${items}${end}</ol></section>`;
+}
 
 // Links gerados pelo Despacho: copiar e enviar pelo WhatsApp.
 function showLinks(results, subject) {
@@ -362,7 +374,8 @@ const views = {
     if (!id) return staffList("Histórico", "h", true);
     const d = await api("/api/protocols/" + id + "?h=1"), p = d.protocol, recs = d.recipients;
     const head = `<h1>${esc(p.protocol_number)} — ${esc(p.subject)}</h1><p class="muted">${stageChip(countsOf(p, recs))}${p.closed_at ? ` &nbsp; Ato encerrado em ${fmt(p.closed_at)}` : ""}</p>`;
-    const body = stepsPanel("Tramitação interna: Protocolo → Análise → Despacho", d.steps.filter((x) => !x.recipient_id), p, "", d.files) + recs.map((r) => `<h2 class="sech">${esc(r.sector)} ${recChip(r)}</h2>` + legPanels(d.steps.filter((x) => x.recipient_id === r.rid), p, r.sector, d.files)).join("");
+    const body = stepsPanel("Tramitação interna: Protocolo → Análise → Despacho", d.steps.filter((x) => !x.recipient_id), p, "", d.files) + recs.map((r) => sectorPanel(r, d.steps.filter((x) => x.recipient_id === r.rid), p, d.files)).join("")
+      + (p.closed_at ? `<section class="panel"><ol class="stp"><li class="done"><span class="dot">${ICON.ok}</span><div><b>Ato administrativo encerrado</b><div class="when">Todos os setores concluídos. Arquivado em ${fmt(p.closed_at)}</div></div></li></ol></section>` : "");
     shell(`<div class="hhead"><a class="backbtn" href="#/historico" title="Voltar ao histórico" aria-label="Voltar ao histórico">${ICON.back}</a><div>${head}</div></div><div class="hist">${body || `<div class="panel empty">Sem movimentações registradas.</div>`}</div>`, "h");
     poll();
   },
@@ -465,8 +478,8 @@ const views = {
 
     const fwd = mineFwd ? (s === 2
       ? `<div class="panel act"><h2>Análise e encaminhamento ao Despacho</h2>${prevBox(prev, "Recebido de")}<form id="ff"><div class="field"><label for="fs">Assunto</label><input id="fs" required maxlength="200"></div><div class="field"><label for="fd">Descrição</label><textarea id="fd" maxlength="5000"></textarea></div><p class="muted">O assunto e a descrição abaixo serão vistos somente pelo Despacho.</p><button class="btn">Encaminhar ao Despacho</button></form></div>`
-      : `<div class="panel act"><h2>Documento a enviar ao setor</h2>${prevBox(prev, "Recebido de")}<form id="ff"><div class="field"><label for="fs">Assunto</label><input id="fs" required maxlength="200" value="${esc(p.subject)}"></div>
-        <div class="field"><label for="fd">Descrição</label><textarea id="fd" maxlength="5000" placeholder="Ex.: Favor responder em até 10 dias.">${esc(p.description || "")}</textarea></div>
+      : `<div class="panel act"><h2>Documento a enviar ao setor</h2>${prevBox(prev, "Recebido de")}<form id="ff"><div class="field"><label for="fs">Assunto</label><input id="fs" required maxlength="200" autocomplete="off"></div>
+        <div class="field"><label for="fd">Descrição</label><textarea id="fd" maxlength="5000" placeholder="Ex.: Favor responder em até 10 dias."></textarea></div>
         <div class="field"><label>Documentos que seguem no link</label>
           <label class="chk"><input type="checkbox" id="fip" ${orig.some((f) => f.holder === "u1") ? "" : "disabled"}> Documento do Protocolo (${orig.filter((f) => f.holder === "u1").length} PDF)</label>
           <label class="chk"><input type="checkbox" id="fid" checked> Documento do Despacho (anexar abaixo)</label></div>
@@ -610,7 +623,7 @@ async function boot(user) {
     me = r.user; org = r.org; await loadLogo();
     if (!staff()) return noRoleView();
     route(); startNotifications();
-  } catch (e) { toast(e.message, true); await signOut(auth); }
+  } catch (e) { if (!e.stale) toast(e.message, true); await signOut(auth); }
 }
 onAuthStateChanged(auth, async (user) => {
   if (!user) { me = null; org = null; revokeLogo(); clearInterval(timer); sessionStorage.clear(); return loginView(); }
