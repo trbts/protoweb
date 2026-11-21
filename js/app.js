@@ -296,7 +296,10 @@ function stepLi(st, p, sectorName, files = [], ctx = {}) {
   const quietExit = sec && !back && !ctx.noReply;
   if (st.exited_at && !quietExit) lines.push(`${ctx.last ? "Arquivado em" : sec && back ? "Resposta recebida em" : sec ? "Encerrado sem resposta em" : st.holder === "u1" && back ? "Arquivado em" : "Encaminhado em"} ${fmt(st.exited_at)}`);
   if (sec && person && st.exited_at && !quietExit) lines.push(`Registrado por ${esc(person)}`);
-  const att = files.filter((f) => f.step_id === st.id);
+  const rp = ctx.reply; // resposta do setor: entra no mesmo tópico do envio
+  if (rp) { lines.push(`Resposta recebida em ${fmt(rp.exited_at)}`); if (rp.author) lines.push(`Registrado por ${esc(rp.author)}`); }
+  const att = files.filter((f) => f.step_id === st.id || (rp && f.step_id === rp.id));
+  if (rp) st = { ...st, comment: rp.comment, out_number: rp.out_number, out_date: rp.out_date };
   const done = !!st.exited_at, cur = !done && (!!st.entered_at || u1);
   return `<li class="${done ? "done" : cur ? "cur" : "wait"}"><span class="dot">${done ? ICON.ok : ""}</span><div><b>${sec ? esc(sectorName || "Setor") : STEP[st.holder]}${!sec && person ? ` · <span class="who2">${esc(person)}</span>` : ""}</b>${lines.filter(Boolean).map((l) => `<div class="when">${l}</div>`).join("")}${st.out_number ? `<div class="when">Protocolo registrado: <b>${esc(st.out_number)}</b> de ${fmtDay(st.out_date)}</div>` : ""}${att.length ? `<div class="when">Anexo(s): ${att.map((f) => esc(f.file_name)).join("; ")}</div>` : ""}${st.comment ? `<div class="msg"><div style="white-space:pre-wrap">${esc(st.comment)}</div></div>` : ""}</div></li>`;
 }
@@ -305,7 +308,8 @@ const stepsPanel = (title, list, p, sectorName, files) => list.length ? `<sectio
 function sectorPanel(r, list, p, files) {
   const noReply = r.closed_reason === "sem_resposta";
   const lastId = r.closed_at && !noReply ? list.filter((x) => x.leg === "volta" && x.exited_at).pop()?.id : null;
-  const items = list.map((x) => stepLi(x, p, r.sector, files, { noReply, last: x.id === lastId })).join("");
+  const reply = list.find((x) => x.holder === "sector" && x.leg === "volta");
+  const items = list.filter((x) => x !== reply).map((x) => stepLi(x, p, r.sector, files, { noReply, last: x.id === lastId, reply: x.holder === "sector" && x.leg === "ida" ? reply : null })).join("");
   const end = r.closed_at ? `<li class="done"><span class="dot">${ICON.ok}</span><div><b>Encerrado e arquivado</b><div class="when">${noReply ? "Encerrado sem resposta do setor" : "Ciclo do setor encerrado"} em ${fmt(r.closed_at)}</div></div></li>` : "";
   return `<section class="panel"><h2>${esc(r.sector)} ${recChip(r)}</h2><ol class="stp">${items}${end}</ol></section>`;
 }
@@ -374,8 +378,7 @@ const views = {
     if (!id) return staffList("Histórico", "h", true);
     const d = await api("/api/protocols/" + id + "?h=1"), p = d.protocol, recs = d.recipients;
     const head = `<h1>${esc(p.protocol_number)} — ${esc(p.subject)}</h1><p class="muted">${stageChip(countsOf(p, recs))}${p.closed_at ? ` &nbsp; Ato encerrado em ${fmt(p.closed_at)}` : ""}</p>`;
-    const body = stepsPanel("Tramitação interna: Protocolo → Análise → Despacho", d.steps.filter((x) => !x.recipient_id), p, "", d.files) + recs.map((r) => sectorPanel(r, d.steps.filter((x) => x.recipient_id === r.rid), p, d.files)).join("")
-      + (p.closed_at ? `<section class="panel"><ol class="stp"><li class="done"><span class="dot">${ICON.ok}</span><div><b>Ato administrativo encerrado</b><div class="when">Todos os setores concluídos. Arquivado em ${fmt(p.closed_at)}</div></div></li></ol></section>` : "");
+    const body = stepsPanel("Tramitação interna: Protocolo → Análise → Despacho", d.steps.filter((x) => !x.recipient_id), p, "", d.files) + recs.map((r) => sectorPanel(r, d.steps.filter((x) => x.recipient_id === r.rid), p, d.files)).join("");
     shell(`<div class="hhead"><a class="backbtn" href="#/historico" title="Voltar ao histórico" aria-label="Voltar ao histórico">${ICON.back}</a><div>${head}</div></div><div class="hist">${body || `<div class="panel empty">Sem movimentações registradas.</div>`}</div>`, "h");
     poll();
   },
