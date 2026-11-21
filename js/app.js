@@ -286,10 +286,10 @@ const waText = (subject, link) => `Olá! ${org.name} enviou um documento: ${subj
 function stepLi(st, p, sectorName, files = [], ctx = {}) {
   const person = st.author || st.viewer, u1 = st.holder === "u1" && st.leg === "ida", sec = st.holder === "sector", back = st.leg === "volta";
   const lines = [];
-  if (u1) lines.push(`Entrada (data do protocolo): ${fmtDay(p.entry_date)}`);
+  if (u1) lines.push(`Entrada (data do protocolo): ${fmtDay(p.entry_date)}${p.entry_time ? " às " + esc(p.entry_time) : ""}`);
   else if (sec && !back) lines.push(`Link enviado em ${fmt(st.entered_at)}`);
   else if (st.entered_at) lines.push(`Chegou em ${fmt(st.entered_at)}`);
-  if (!sec && st.holder !== "u1") lines.push(st.viewed_at ? `Recebido em ${fmt(st.viewed_at)}${st.viewer ? " por " + esc(st.viewer) : ""}` : st.entered_at && !st.exited_at ? "Aguardando recebimento" : "");
+  if (!sec && !st.viewed_at && st.entered_at && !st.exited_at) lines.push("Aguardando recebimento"); // "Chegou em" já indica o recebimento
   if (sec && !back) lines.push(st.viewed_at ? `Recebido pelo destinatário em ${fmt(st.viewed_at)} (link aberto)` : !st.exited_at ? "Aguardando o destinatário abrir o link" : "");
   if (sec && !back && !st.exited_at) lines.push("Aguardando o retorno do setor");
   // No card contínuo do setor, a saída do link só aparece quando o envio foi encerrado sem resposta (se houve resposta, o passo seguinte mostra).
