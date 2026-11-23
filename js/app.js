@@ -65,7 +65,7 @@ function dialog(html, { ok = "Confirmar", cancel, onOk, big, required } = {}) {
   m.innerHTML = `<div role="dialog">${html}<div class="acts">${required ? "" : `<button class="btn sec" data-x>${cancel || (onOk ? "Cancelar" : "Fechar")}</button>`}${onOk ? `<button class="btn" data-ok>${ok}</button>` : ""}</div></div>`;
   document.body.append(m);
   const close = () => m.remove();
-  m.addEventListener("click", (e) => { if (!required && e.target.dataset.x !== undefined) close(); // clicar fora não fecha: só o botão });
+  m.addEventListener("click", (e) => { if (!required && e.target.dataset.x !== undefined) close(); });
   const b = $("[data-ok]", m);
   if (b) b.onclick = async () => { b.disabled = true; try { if ((await onOk(m)) !== false) close(); } catch (e) { toast(e.message, true); } b.disabled = false; };
   return m;
