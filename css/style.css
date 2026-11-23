@@ -355,3 +355,21 @@ input.code{text-transform:uppercase;letter-spacing:2px}
 .chk{display:flex;gap:8px;align-items:center;font-weight:600}.chk input{width:auto;margin:0}
 .track{text-align:center;margin:16px 0 0}.track a{color:var(--pri-d);font-weight:600}
 .cfg .wide{grid-column:1/-1}.cfg .wide .panel{margin-bottom:0}
+
+/* Foto de perfil em emoji (Despacho) + 5 bordas femininas */
+.avatar.emo{align-items:center;justify-content:center;line-height:1;box-sizing:border-box;background:#fff0f6;font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif;user-select:none}
+.avatar.emo.b1{border:3px solid #ffb3d1}
+.avatar.emo.b2{border:3px solid transparent;background:linear-gradient(#fff0f6,#fff0f6) padding-box,linear-gradient(135deg,#ff8fc0,#c9a0ff) border-box}
+.avatar.emo.b3{border:3px solid transparent;background:linear-gradient(#fff0f6,#fff0f6) padding-box,linear-gradient(135deg,#ffc9a8,#ff9ec4 55%,#ffe08a) border-box}
+.avatar.emo.b4{border:3px solid #ff8fbf;box-shadow:inset 0 0 0 2px #fff,0 0 0 2px #ffd3e6}
+.avatar.emo.b5{border:3px dotted #b98cf0}
+.avprev{display:flex;align-items:center;gap:14px;margin:4px 0 12px}
+.avprev b{font-size:14px;color:#1f1a2b}
+.avgrid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:10px;max-width:360px}
+.avo{display:flex;align-items:center;justify-content:center;aspect-ratio:1;border:2px solid #efdde6;border-radius:12px;background:#fff;font-size:26px;line-height:1;cursor:pointer;padding:4px;transition:transform .15s,border-color .15s,background-color .15s}
+.avo:hover{transform:translateY(-2px);border-color:#d9b8ff}
+.avo[aria-pressed=true]{border-color:#551A8B;background:#f5ecff}
+.avo:focus-visible{outline:3px solid #b98cf0;outline-offset:2px}
+.avb{padding:2px}
+.avhint{margin:6px 0}
+.avhint span{font-size:12px}
