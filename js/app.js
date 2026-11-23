@@ -472,13 +472,24 @@ const views = {
     const ops = [["contatos", "Apagar todos os contatos"], ["usuarios", "Apagar todos os usuários (menos o seu)"], ["tudo", "Apagar tudo: protocolos, contatos e usuários (menos o seu)"]];
     const F = { dev: "Dev", user1: "Protocolo", user2: "Análise", user3: "Despacho", nenhuma: "Sem função" };
     const wusers = await api("/api/users");
-    shell(`<h1>Dev · Limpeza de dados</h1><p class="muted">Ações permanentes e sem volta. Para confirmar, digite APAGAR. Usuários apagados podem se cadastrar de novo; para remover também a conta de login, apague-a no Firebase (Authentication → Users). Excluir um protocolo isolado é feito na tela do próprio protocolo.</p>
+    shell(`<h1>Dev · Backup e limpeza de dados</h1>
+    <div class="panel"><h2>Backup dos dados do sistema</h2><p class="muted">Baixa um arquivo (.json) com usuários, contatos, protocolos, andamentos, setores, envios e a lista de arquivos. Os PDFs em si ficam guardados na nuvem (R2) e não vão dentro do arquivo; os links de envio também ficam de fora. O arquivo tem dados pessoais: guarde em local seguro. Faça o backup antes de apagar qualquer coisa.</p>
+      <div class="drow"><span id="bkinfo" class="muted"></span><button class="btn" id="bk">Baixar backup</button></div></div>
+    <p class="muted">Ações permanentes e sem volta. Para confirmar, digite APAGAR. Usuários apagados podem se cadastrar de novo; para remover também a conta de login, apague-a no Firebase (Authentication → Users). Excluir um protocolo isolado é feito na tela do próprio protocolo.</p>
     <div class="panel"><h2>Apagar protocolos (com arquivos e históricos)</h2>
       <div class="frow3" style="grid-template-columns:repeat(3,minmax(0,1fr))"><div class="field"><label for="wy">Ano</label><select id="wy"><option value="">Todos</option></select></div>
       <div class="field"><label for="wm">Mês</label><select id="wm"><option value="">Todos</option>${["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"].map((m, i) => `<option value="${String(i + 1).padStart(2, "0")}">${m}</option>`).join("")}</select></div>
       <div class="field"><label for="wu">Usuário (que criou ou atuou)</label><select id="wu"><option value="">Todos</option>${wusers.map((u) => `<option value="${u.id}">${esc(u.name)} · ${F[u.funcao] || "Sem função"}</option>`).join("")}</select></div></div>
       <div class="drow"><span id="wcount" class="muted">Contando…</span><button class="btn sec sm" id="wgo" disabled>Apagar protocolos</button></div></div>
     <div class="panel">${ops.map(([k, t]) => `<div class="drow"><span>${t}</span><button class="btn sec sm" data-w="${k}">Apagar</button></div>`).join("")}</div>`, "d");
+    $("#bk").onclick = guard(async () => {
+      const b = await api("/api/dev/backup", { blob: true }), d = JSON.parse(await b.text()), t = new Date(), p = (n) => String(n).padStart(2, "0");
+      const name = `protoweb-backup-${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}-${p(t.getHours())}${p(t.getMinutes())}.json`;
+      const url = URL.createObjectURL(new Blob([JSON.stringify(d, null, 1)], { type: "application/json" })), a = Object.assign(document.createElement("a"), { href: url, download: name });
+      document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+      $("#bkinfo").textContent = `Backup de ${fmt(d.gerado_em)}: ${d.totais.protocolos} protocolo(s), ${d.totais.usuarios} usuário(s), ${d.totais.contatos} contato(s), ${d.totais.arquivos} arquivo(s).`;
+      toast("Backup baixado");
+    });
     const filt = () => ({ year: $("#wy").value, month: $("#wm").value, user_id: $("#wu").value });
     const count = guard(async () => {
       const r = await api("/api/dev/wipe", { method: "POST", body: { scope: "protocolos", dry: true, ...filt() } });
