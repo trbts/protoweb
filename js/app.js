@@ -121,18 +121,19 @@ const avatarPicker = () => {
   return `<h3 class="sech">Foto de perfil</h3><div class="avprev" id="avprev"></div>
     <div class="avgrid" id="avem" role="group" aria-label="Escolha um emoji">${AV_EMOJIS.map((e, i) => `<button type="button" class="avo" data-e="${e}" title="${AV_NAMES[i]}" aria-label="${AV_NAMES[i]}">${e}</button>`).join("")}</div>
     <p class="muted avhint">Borda <span>(toque de novo na borda escolhida para tirar)</span></p>
-    <div class="avgrid" id="avbd" role="group" aria-label="Escolha uma borda">${AV_BORDERS.map((n, i) => `<button type="button" class="avo avb" data-b="${i + 1}" title="${n}" aria-label="${n}"><span class="avatar emo b${i + 1}" style="width:40px;height:40px;font-size:22px">${AV_EMOJIS[0]}</span></button>`).join("")}</div>
+    <div class="avgrid" id="avbd" role="group" aria-label="Escolha uma borda">${AV_BORDERS.map((n, i) => `<button type="button" class="avo avb" data-b="${i + 1}" title="${n}" aria-label="${n}"><span class="avatar emo b${i + 1}" style="width:40px;height:40px;font-size:22px"></span></button>`).join("")}</div>
     <button type="button" class="btn sec sm" id="avx">Usar ícone padrão</button>`;
 };
 function bindAvatarPicker() {
   if (!avSel) return;
   const paint = () => {
     $("#avprev").innerHTML = avSel.emoji ? emojiAvatar(avSel.emoji, avSel.border, 84) + `<b>${AV_NAMES[AV_EMOJIS.indexOf(avSel.emoji)]}${avSel.border ? " · " + AV_BORDERS[avSel.border - 1] : ""}</b>` : `<span class="avatar" style="width:84px;height:84px">${ICON.user}</span><b>Ícone padrão</b>`;
+    document.querySelectorAll("#avbd .avatar").forEach((a) => (a.textContent = avSel.emoji));
     document.querySelectorAll("#avem .avo").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.e === avSel.emoji)));
     document.querySelectorAll("#avbd .avo").forEach((b) => b.setAttribute("aria-pressed", String(+b.dataset.b === avSel.border)));
   };
   document.querySelectorAll("#avem .avo").forEach((b) => (b.onclick = () => { avSel.emoji = b.dataset.e; paint(); }));
-  document.querySelectorAll("#avbd .avo").forEach((b) => (b.onclick = () => { const v = +b.dataset.b; avSel.border = avSel.border === v ? 0 : v; if (!avSel.emoji) avSel.emoji = AV_EMOJIS[0]; paint(); }));
+  document.querySelectorAll("#avbd .avo").forEach((b) => (b.onclick = () => { const v = +b.dataset.b; avSel.border = avSel.border === v ? 0 : v; paint(); }));
   $("#avx").onclick = () => { avSel.emoji = ""; avSel.border = 0; paint(); };
   paint();
 }
@@ -164,8 +165,8 @@ const ICON = {
 };
 ICON.m = ICON.l;
 // Foto de perfil em emoji (só Despacho): 10 emojis fofos (o primeiro é o panda) e 5 bordas femininas.
-const AV_EMOJIS = ["\u{1F43C}", "\u{1F431}", "\u{1F430}", "\u{1F98A}", "\u{1F43B}", "\u{1F428}", "\u{1F425}", "\u{1F984}", "\u{1F439}", "\u{1F438}"];
-const AV_NAMES = ["Panda", "Gatinho", "Coelhinho", "Raposinha", "Ursinho", "Coala", "Pintinho", "Unicórnio", "Hamster", "Sapinho"];
+const AV_EMOJIS = ["\u{1F43C}", "\u{1F431}", "\u{1F430}", "\u{1F98A}", "\u{1F43B}", "\u{1F428}", "\u{1F9A5}", "\u{1F984}", "\u{1F439}", "\u{1F438}"];
+const AV_NAMES = ["Panda", "Gatinho", "Coelhinho", "Raposinha", "Ursinho", "Coala", "Preguiça", "Unicórnio", "Hamster", "Sapinho"];
 const AV_BORDERS = ["Rosa bebê", "Degradê rosa e lilás", "Pêssego e dourado", "Rosa dupla", "Lilás rendado"];
 const emojiAvatar = (emoji, border, px) => `<span class="avatar emo b${+border || 0}" style="width:${px}px;height:${px}px;font-size:${Math.round(px * 0.58)}px" role="img" aria-label="Foto de perfil">${emoji}</span>`;
 const avatar = (px) => {
