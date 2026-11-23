@@ -475,6 +475,9 @@ const views = {
     shell(`<h1>Dev · Backup e limpeza de dados</h1>
     <div class="panel"><h2>Backup dos dados do sistema</h2><p class="muted">Baixa um arquivo (.json) com usuários, contatos, protocolos, andamentos, setores, envios e a lista de arquivos. Os PDFs em si ficam guardados na nuvem (R2) e não vão dentro do arquivo; os links de envio também ficam de fora. O arquivo tem dados pessoais: guarde em local seguro. Faça o backup antes de apagar qualquer coisa.</p>
       <div class="drow"><span id="bkinfo" class="muted"></span><button class="btn" id="bk">Baixar backup</button></div></div>
+    <div class="panel"><h2>Importar dados exportados</h2><p class="muted">Escolha um arquivo de backup (.json) gerado nesta tela. A importação só acrescenta: nada do que já existe é apagado ou alterado, e protocolos com número já existente são ignorados. Os PDFs não vão dentro do backup: os arquivos importados só abrem se os PDFs ainda estiverem guardados na nuvem.</p>
+      <label class="chk"><input type="checkbox" id="imu" checked> Importar também usuários e funções</label>
+      <div class="drow"><input type="file" id="imf" accept=".json,application/json"><button class="btn" id="imgo" disabled>Importar</button></div></div>
     <p class="muted">Ações permanentes e sem volta. Para confirmar, digite APAGAR. Usuários apagados podem se cadastrar de novo; para remover também a conta de login, apague-a no Firebase (Authentication → Users). Excluir um protocolo isolado é feito na tela do próprio protocolo.</p>
     <div class="panel"><h2>Apagar protocolos (com arquivos e históricos)</h2>
       <div class="frow3" style="grid-template-columns:repeat(3,minmax(0,1fr))"><div class="field"><label for="wy">Ano</label><select id="wy"><option value="">Todos</option></select></div>
@@ -489,6 +492,25 @@ const views = {
       document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
       $("#bkinfo").textContent = `Backup de ${fmt(d.gerado_em)}: ${d.totais.protocolos} protocolo(s), ${d.totais.usuarios} usuário(s), ${d.totais.contatos} contato(s), ${d.totais.arquivos} arquivo(s).`;
       toast("Backup baixado");
+    });
+    let imData = null;
+    $("#imf").onchange = guard(async (e) => {
+      imData = null; $("#imgo").disabled = true;
+      const f = e.target.files[0];
+      if (!f) return;
+      if (f.size > 25 * 1048576) throw new Error("Arquivo grande demais (máximo 25 MB).");
+      try { imData = JSON.parse(await f.text()); } catch { throw new Error("O arquivo não é um JSON válido."); }
+      if (!imData || imData.sistema !== "ProtoWeb") { imData = null; throw new Error("Este não é um arquivo de backup do ProtoWeb."); }
+      $("#imgo").disabled = false;
+    });
+    $("#imgo").onclick = guard(async () => {
+      if (!imData) return;
+      const body = { data: imData, users: $("#imu").checked };
+      const r = await api("/api/dev/import", { method: "POST", body: { ...body, dry: true } });
+      const li = (n, o) => `<li>${n}: <b>${o.novos}</b> a importar${o.existentes ? `, ${o.existentes} já existem` : ""}${o.ignorados ? `, ${o.ignorados} ignorado(s)` : ""}</li>`;
+      dialog(`<h2>Importar backup de ${fmt(imData.gerado_em)}</h2><ul>${li("Protocolos", r.protocolos)}${li("Contatos", r.contatos)}${li("Usuários", r.usuarios)}${li("Andamentos", r.etapas)}${li("Setores", r.destinatarios)}${li("Arquivos (registros)", r.arquivos)}${li("Envios", r.envios)}</ul><p class="muted">Nada do que já existe será apagado ou alterado.</p>`, { ok: "Importar", onOk: async () => {
+        await api("/api/dev/import", { method: "POST", body }); toast("Dados importados"); route();
+      } });
     });
     const filt = () => ({ year: $("#wy").value, month: $("#wm").value, user_id: $("#wu").value });
     const count = guard(async () => {
