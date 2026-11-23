@@ -115,11 +115,35 @@ const bindFiles = (root) => {
 
 // ---------- dados do usuário
 const profileFields = () => `<div class="field"><label for="pn">Nome completo</label><input id="pn" value="${esc(me.name)}" maxlength="120" autocomplete="name"></div>`;
+let avSel = null; // escolha em andamento: { emoji, border }
+const avatarPicker = () => {
+  avSel = { emoji: AV_EMOJIS.includes(me.avatar_emoji) ? me.avatar_emoji : "", border: me.avatar_border || 0 };
+  return `<h3 class="sech">Foto de perfil</h3><div class="avprev" id="avprev"></div>
+    <div class="avgrid" id="avem" role="group" aria-label="Escolha um emoji">${AV_EMOJIS.map((e, i) => `<button type="button" class="avo" data-e="${e}" title="${AV_NAMES[i]}" aria-label="${AV_NAMES[i]}">${e}</button>`).join("")}</div>
+    <p class="muted avhint">Borda <span>(toque de novo na borda escolhida para tirar)</span></p>
+    <div class="avgrid" id="avbd" role="group" aria-label="Escolha uma borda">${AV_BORDERS.map((n, i) => `<button type="button" class="avo avb" data-b="${i + 1}" title="${n}" aria-label="${n}"><span class="avatar emo b${i + 1}" style="width:40px;height:40px;font-size:22px">${AV_EMOJIS[0]}</span></button>`).join("")}</div>
+    <button type="button" class="btn sec sm" id="avx">Usar ícone padrão</button>`;
+};
+function bindAvatarPicker() {
+  if (!avSel) return;
+  const paint = () => {
+    $("#avprev").innerHTML = avSel.emoji ? emojiAvatar(avSel.emoji, avSel.border, 84) + `<b>${AV_NAMES[AV_EMOJIS.indexOf(avSel.emoji)]}${avSel.border ? " · " + AV_BORDERS[avSel.border - 1] : ""}</b>` : `<span class="avatar" style="width:84px;height:84px">${ICON.user}</span><b>Ícone padrão</b>`;
+    document.querySelectorAll("#avem .avo").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.e === avSel.emoji)));
+    document.querySelectorAll("#avbd .avo").forEach((b) => b.setAttribute("aria-pressed", String(+b.dataset.b === avSel.border)));
+  };
+  document.querySelectorAll("#avem .avo").forEach((b) => (b.onclick = () => { avSel.emoji = b.dataset.e; paint(); }));
+  document.querySelectorAll("#avbd .avo").forEach((b) => (b.onclick = () => { const v = +b.dataset.b; avSel.border = avSel.border === v ? 0 : v; if (!avSel.emoji) avSel.emoji = AV_EMOJIS[0]; paint(); }));
+  $("#avx").onclick = () => { avSel.emoji = ""; avSel.border = 0; paint(); };
+  paint();
+}
 async function saveProfile() {
   const name = $("#pn").value.trim();
   if (name.length < 3) throw new Error("Informe seu nome completo");
-  const r = await api("/api/me/profile", { method: "PUT", body: { name } });
+  const body = { name };
+  if (me.step === 3 && avSel) { body.avatar_emoji = avSel.emoji; body.avatar_border = avSel.border; }
+  const r = await api("/api/me/profile", { method: "PUT", body });
   me.name = r.name;
+  if (me.step === 3 && avSel) { me.avatar_emoji = r.avatar_emoji; me.avatar_border = r.avatar_border; }
 }
 
 // ---------- estrutura
@@ -139,10 +163,18 @@ const ICON = {
   user: '<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="#5d5a66"/><circle cx="12" cy="9.5" r="4" fill="#e9e6f0"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0a12 12 0 0 1-15 0z" fill="#e9e6f0"/></svg>',
 };
 ICON.m = ICON.l;
-const avatar = (px) => { const u = auth.currentUser?.photoURL; return u ? `<img class="avatar" style="width:${px}px;height:${px}px" src="${esc(u)}" referrerpolicy="no-referrer" alt="">` : `<span class="avatar" style="width:${px}px;height:${px}px">${ICON.user}</span>`; };
+// Foto de perfil em emoji (só Despacho): 10 emojis fofos (o primeiro é o panda) e 5 bordas femininas.
+const AV_EMOJIS = ["\u{1F43C}", "\u{1F431}", "\u{1F430}", "\u{1F98A}", "\u{1F43B}", "\u{1F428}", "\u{1F425}", "\u{1F984}", "\u{1F439}", "\u{1F438}"];
+const AV_NAMES = ["Panda", "Gatinho", "Coelhinho", "Raposinha", "Ursinho", "Coala", "Pintinho", "Unicórnio", "Hamster", "Sapinho"];
+const AV_BORDERS = ["Rosa bebê", "Degradê rosa e lilás", "Pêssego e dourado", "Rosa dupla", "Lilás rendado"];
+const emojiAvatar = (emoji, border, px) => `<span class="avatar emo b${+border || 0}" style="width:${px}px;height:${px}px;font-size:${Math.round(px * 0.58)}px" role="img" aria-label="Foto de perfil">${emoji}</span>`;
+const avatar = (px) => {
+  if (me?.step === 3 && AV_EMOJIS.includes(me.avatar_emoji)) return emojiAvatar(me.avatar_emoji, me.avatar_border, px);
+  const u = auth.currentUser?.photoURL; return u ? `<img class="avatar" style="width:${px}px;height:${px}px" src="${esc(u)}" referrerpolicy="no-referrer" alt="">` : `<span class="avatar" style="width:${px}px;height:${px}px">${ICON.user}</span>`;
+};
 function shell(inner, active) {
   const dev = me.role === "dev";
-  const sig = [me.id, me.funcao, me.name, org.name, logoUrl].join("|");
+  const sig = [me.id, me.funcao, me.name, org.name, logoUrl, me.avatar_emoji, me.avatar_border].join("|");
   const cur = $("#app .shell");
   if (cur && cur.dataset.sig === sig) { // mesma estrutura: só troca o conteúdo e a aba ativa, com transição
     cur.querySelectorAll(".side nav a").forEach((a) => a.classList.toggle("on", a.dataset.k === active));
@@ -344,10 +376,11 @@ const views = {
       <p class="muted">Plano <b>${esc(o.plan)}</b></p>
       <div class="usage"><span>Usuários: <b>${o.users}</b> de ${o.max_users}</span><div class="pbar2"><i style="width:${Math.min(100, (o.users / o.max_users) * 100)}%"></i></div></div>
       <div class="usage"><span>Armazenamento: <b>${szb(o.storage_bytes)}</b> de ${szb(o.max_storage_mb * 1048576)}</span><div class="pbar2"><i style="width:${Math.min(100, (o.storage_bytes / 1048576 / o.max_storage_mb) * 100)}%"></i></div></div></div>` : "";
-    shell(`<h1>Configurações</h1><div class="cfg"><div class="panel"><h2>Meus dados</h2>${profileFields()}<p class="muted">E-mail: ${esc(me.email)}<br>Função: <b>${F[me.funcao] || "Sem função"}</b> (definida pelo administrador)<br>Organização: <b>${esc(org.name)}</b></p><button class="btn" id="sv">Salvar dados</button></div>
+    shell(`<h1>Configurações</h1><div class="cfg"><div class="panel"><h2>Meus dados</h2>${profileFields()}${me.step === 3 ? avatarPicker() : ""}<p class="muted">E-mail: ${esc(me.email)}<br>Função: <b>${F[me.funcao] || "Sem função"}</b> (definida pelo administrador)<br>Organização: <b>${esc(org.name)}</b></p><button class="btn" id="sv">Salvar dados</button></div>
       <div class="panel"><h2>Alterar senha</h2><form id="pwf" novalidate><div class="field"><label for="pw0">Senha atual</label><input id="pw0" type="password" autocomplete="current-password"></div>
       <div class="field"><label for="pw1">Nova senha (mínimo 6 caracteres)</label><input id="pw1" type="password" autocomplete="new-password"></div>
       <div class="field"><label for="pw2">Repita a nova senha</label><input id="pw2" type="password" autocomplete="new-password"></div><button class="btn" id="pw">Alterar senha</button></form></div>${orgPanel ? `<div class="wide">${orgPanel}</div>` : ""}</div>`, "c");
+    if (me.step === 3) bindAvatarPicker(); else avSel = null;
     $("#sv").onclick = guard(async () => { await saveProfile(); toast("Dados salvos"); route(); });
     $("#pwf").onsubmit = guard(async (e) => {
       e.preventDefault();
@@ -377,7 +410,7 @@ const views = {
   async historico(id) {
     if (!id) return staffList("Histórico", "h", true);
     const d = await api("/api/protocols/" + id + "?h=1"), p = d.protocol, recs = d.recipients;
-    const head = `<h1>${esc(p.protocol_number)} — ${esc(p.subject)}</h1><p class="muted">${stageChip(countsOf(p, recs))}${p.closed_at ? ` &nbsp; Ato encerrado em ${fmt(p.closed_at)}` : ""}</p>`;
+    const head = `<h1>${esc(p.protocol_number)}${p.subject ? " — " + esc(p.subject) : ""}</h1><p class="muted">${stageChip(countsOf(p, recs))}${p.closed_at ? ` &nbsp; Ato encerrado em ${fmt(p.closed_at)}` : ""}</p>`;
     const body = stepsPanel("Tramitação interna: Protocolo → Análise → Despacho", d.steps.filter((x) => !x.recipient_id), p, "", d.files) + recs.map((r) => sectorPanel(r, d.steps.filter((x) => x.recipient_id === r.rid), p, d.files)).join("");
     shell(`<div class="hhead"><a class="backbtn" href="#/historico" title="Voltar ao histórico" aria-label="Voltar ao histórico">${ICON.back}</a><div>${head}</div></div><div class="hist">${body || `<div class="panel empty">Sem movimentações registradas.</div>`}</div>`, "h");
     poll();
@@ -480,7 +513,7 @@ const views = {
 
 
     const fwd = mineFwd ? (s === 2
-      ? `<div class="panel act"><h2>Análise e encaminhamento ao Despacho</h2>${prevBox(prev, "Recebido de")}<form id="ff"><div class="field"><label for="fs">Assunto</label><input id="fs" required maxlength="200"></div><div class="field"><label for="fd">Descrição</label><textarea id="fd" maxlength="5000"></textarea></div><p class="muted">O assunto e a descrição abaixo serão vistos somente pelo Despacho.</p><button class="btn">Encaminhar ao Despacho</button></form></div>`
+      ? `<div class="panel act"><h2>Análise e encaminhamento ao Despacho</h2>${prevBox(prev, "Recebido de")}<form id="ff"><div class="field"><label for="fd">Descrição</label><textarea id="fd" maxlength="5000"></textarea></div><p class="muted">A descrição acima será vista somente pelo Despacho.</p><button class="btn">Encaminhar ao Despacho</button></form></div>`
       : `<div class="panel act"><h2>Documento a enviar ao setor</h2>${prevBox(prev, "Recebido de")}<form id="ff"><div class="field"><label for="fs">Assunto</label><input id="fs" required maxlength="200" autocomplete="off"></div>
         <div class="field"><label for="fd">Descrição</label><textarea id="fd" maxlength="5000" placeholder="Ex.: Favor responder em até 10 dias."></textarea></div>
         <div class="field"><label>Documentos que seguem no link</label>
@@ -510,7 +543,7 @@ const views = {
     const more = can3 && p.stage === "sector" && others.length ? `<div class="panel"><h2>Enviar a outro setor</h2><form id="mf"><div class="field">${ctList(others, "mct")}</div><p class="muted">Será enviado o mesmo documento (novo link para cada setor).</p><button class="btn">Gerar link</button></form></div>` : "";
     const rep = recs.map((r) => ({ r, list: steps.filter((x) => x.recipient_id === r.rid && x.leg === "volta" && x.holder === "sector") })).filter((x) => x.list.length);
     const reps = rep.length ? `<div class="panel"><h2>Respostas dos setores</h2>${rep.map(({ r, list }) => list.map((x) => `<div class="msg adm"><small><b>${esc(r.sector)}</b> · registrada por ${esc(x.author || "")} · ${fmt(x.exited_at)}${x.out_number ? ` · protocolo ${esc(x.out_number)} de ${fmtDay(x.out_date)}` : ""}</small>${x.comment ? `<div style="white-space:pre-wrap">${esc(x.comment)}</div>` : ""}${fileList(files.filter((f) => f.step_id === x.id))}</div>`).join("")).join("")}</div>` : "";
-    shell(`<p><a class="backbtn" href="#/central/protocolos" title="Voltar à lista" aria-label="Voltar à lista">${ICON.back}</a></p><h1>${esc(p.protocol_number)} — ${esc(p.subject)}</h1>
+    shell(`<p><a class="backbtn" href="#/central/protocolos" title="Voltar à lista" aria-label="Voltar à lista">${ICON.back}</a></p><h1>${esc(p.protocol_number)}${p.subject ? " — " + esc(p.subject) : ""}</h1>
     <div class="panel"><p><b>Ato administrativo nº ${esc(p.protocol_number)}</b> &nbsp; ${stageChip(countsOf(p, recs))}</p>${p.closed_at ? `<p class="exwarn ok">Ato administrativo encerrado em ${fmt(p.closed_at)}.</p>` : ""}<p class="muted">Protocolado em ${fmtDay(p.entry_date)}${p.entry_time ? " às " + esc(p.entry_time) : ""}${p.oficio_number ? " · Ofício nº " + esc(p.oficio_number) : ""}</p><p style="white-space:pre-wrap">${esc(p.description)}</p><h2 class="sech">Documento e anexos</h2>${fileList(orig) || '<p class="muted">Sem arquivos.</p>'}<p><a class="btn sec sm" style="text-decoration:none" href="#/historico/${p.id}">Ver histórico de movimentações</a> ${dev ? `<button class="btn sec sm" id="dp">Excluir protocolo</button>` : ""}</p></div>
     ${fwd}${rpl}${back}${secs}${more}${reps}`, "l");
     bindFiles($("main")); poll();
@@ -522,7 +555,7 @@ const views = {
       const ids = s === 3 ? [...document.querySelectorAll("[name=fct]:checked")].map((c) => +c.value) : [];
       if (s === 3 && !ids.length) return toast("Selecione ao menos um setor/contato", true);
       confirmDo(s === 2 ? "Encaminhar ao Despacho? Essa ação não pode ser desfeita." : `Finalizar e gerar o link para ${ids.length} setor(es)? Essa ação não pode ser desfeita.`, async () => {
-        if (s === 2) { await api(`/api/protocols/${pid}/forward`, { method: "POST", body: { subject: $("#fs").value, description: $("#fd").value } }); poll(); toast("Encaminhado ao Despacho"); location.hash = "#/central/protocolos"; return; }
+        if (s === 2) { await api(`/api/protocols/${pid}/forward`, { method: "POST", body: { description: $("#fd").value } }); poll(); toast("Encaminhado ao Despacho"); location.hash = "#/central/protocolos"; return; }
         const file_ids = $("#fid").checked ? await uploadFiles($("#ffa")) : [];
         if (!file_ids.length && !$("#fip").checked) throw new Error("Marque o documento do Protocolo ou anexe o PDF do Despacho");
         const subject = $("#fs").value;
@@ -583,7 +616,7 @@ async function staffList(title, active, hist = false) {
     if ($("#sc").value) q.set("contact_id", $("#sc").value);
     const { rows, total, pages, page: cur } = await api("/api/protocols?" + q);
     const pager = total > 50 ? `<div class="pager"><button class="btn sec sm" data-pg="${cur - 1}" ${cur <= 1 ? "disabled" : ""}>Anterior</button><span>Página ${cur} de ${pages} · ${total} protocolos</span><button class="btn sec sm" data-pg="${cur + 1}" ${cur >= pages ? "disabled" : ""}>Próxima</button></div>` : "";
-    $("#res").innerHTML = `<div class="wrap"><table><tr><th>Ato (nº do protocolo)</th><th>Assunto</th><th>Entrada</th><th>Situação</th><th></th></tr>${rows.map((r) => `<tr class="${r.mine ? "new" : ""}"><td class="num">${esc(r.protocol_number)}${r.mine ? `<br><span class="newb">Aguardando você</span>` : ""}</td><td class="subj">${esc(r.subject)}</td><td class="nw">${fmtDay(r.entry_date)}</td><td>${stageChip(r)}</td><td class="nw"><a class="btn sec sm" style="text-decoration:none" href="#/${hist ? "historico" : "protocolo"}/${r.pid}">${hist ? "Ver histórico" : "Abrir"}</a></td></tr>`).join("") || `<tr><td colspan="5" class="empty">Nenhum protocolo encontrado.</td></tr>`}</table></div>${pager}`;
+    $("#res").innerHTML = `<div class="wrap"><table><tr><th>Ato (nº do protocolo)</th><th>Assunto</th><th>Entrada</th><th>Situação</th><th></th></tr>${rows.map((r) => `<tr class="${r.mine ? "new" : ""}"><td class="num">${esc(r.protocol_number)}${r.mine ? `<br><span class="newb">Aguardando você</span>` : ""}</td><td class="subj">${esc(r.subject) || "—"}</td><td class="nw">${fmtDay(r.entry_date)}</td><td>${stageChip(r)}</td><td class="nw"><a class="btn sec sm" style="text-decoration:none" href="#/${hist ? "historico" : "protocolo"}/${r.pid}">${hist ? "Ver histórico" : "Abrir"}</a></td></tr>`).join("") || `<tr><td colspan="5" class="empty">Nenhum protocolo encontrado.</td></tr>`}</table></div>${pager}`;
     document.querySelectorAll("[data-pg]").forEach((b) => (b.onclick = () => { load(+b.dataset.pg); window.scrollTo({ top: 0 }); }));
   });
   $("#ff").onsubmit = (e) => { e.preventDefault(); load(1); };
