@@ -514,7 +514,7 @@ const views = {
 
     const fwd = mineFwd ? (s === 2
       ? `<div class="panel act"><h2>Análise e encaminhamento ao Despacho</h2>${prevBox(prev, "Recebido de")}<form id="ff"><div class="field"><label for="fd">Descrição</label><textarea id="fd" maxlength="5000"></textarea></div><p class="muted">A descrição acima será vista somente pelo Despacho.</p><button class="btn">Encaminhar ao Despacho</button></form></div>`
-      : `<div class="panel act"><h2>Documento a enviar ao setor</h2>${prevBox(prev, "Recebido de")}<form id="ff"><div class="field"><label for="fs">Assunto</label><input id="fs" required maxlength="200" autocomplete="off"></div>
+      : `<div class="panel act"><h2>Documento a enviar ao setor</h2>${prevBox(prev, "Recebido de")}<form id="ff"><div class="field"><label for="fs">Assunto</label><input id="fs" required maxlength="200" autocomplete="off" value="${esc(p.subject)}"></div>
         <div class="field"><label for="fd">Descrição</label><textarea id="fd" maxlength="5000" placeholder="Ex.: Favor responder em até 10 dias."></textarea></div>
         <div class="field"><label>Documentos que seguem no link</label>
           <label class="chk"><input type="checkbox" id="fip" ${orig.some((f) => f.holder === "u1") ? "" : "disabled"}> Documento do Protocolo (${orig.filter((f) => f.holder === "u1").length} PDF)</label>
