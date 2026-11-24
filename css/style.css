@@ -358,11 +358,12 @@ input.code{text-transform:uppercase;letter-spacing:2px}
 
 /* Foto de perfil em emoji (Despacho) + 5 bordas femininas */
 .avatar.emo{align-items:center;justify-content:center;line-height:1;box-sizing:border-box;background:#fff0f6;font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif;user-select:none}
-.avatar.emo.b1{border:3px solid #ffb3d1}
-.avatar.emo.b2{border:3px solid transparent;background:linear-gradient(#fff0f6,#fff0f6) padding-box,linear-gradient(135deg,#ff8fc0,#c9a0ff) border-box}
-.avatar.emo.b3{border:3px solid transparent;background:linear-gradient(#fff0f6,#fff0f6) padding-box,linear-gradient(135deg,#ffc9a8,#ff9ec4 55%,#ffe08a) border-box}
-.avatar.emo.b4{border:3px solid #ff8fbf;box-shadow:inset 0 0 0 2px #fff,0 0 0 2px #ffd3e6}
-.avatar.emo.b5{border:3px dotted #b98cf0}
+.avatar.pic{box-sizing:border-box;object-fit:cover;background:#fff0f6}
+.avatar.b1{border:3px solid #ffb3d1}
+.avatar.b2{border:3px solid transparent;background:linear-gradient(#fff0f6,#fff0f6) padding-box,linear-gradient(135deg,#ff8fc0,#c9a0ff) border-box}
+.avatar.b3{border:3px solid transparent;background:linear-gradient(#fff0f6,#fff0f6) padding-box,linear-gradient(135deg,#ffc9a8,#ff9ec4 55%,#ffe08a) border-box}
+.avatar.b4{border:3px solid #ff8fbf;box-shadow:inset 0 0 0 2px #fff,0 0 0 2px #ffd3e6}
+.avatar.b5{border:3px dotted #b98cf0}
 .avprev{display:flex;align-items:center;gap:14px;margin:4px 0 12px}
 .avprev b{font-size:14px;color:#1f1a2b}
 .avgrid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:10px;max-width:360px}
@@ -373,3 +374,37 @@ input.code{text-transform:uppercase;letter-spacing:2px}
 .avb{padding:2px}
 .avhint{margin:6px 0}
 .avhint span{font-size:12px}
+
+/* ---- Texto com quebras de linha, notificação opcional e fotos ---- */
+.pw{white-space:pre-wrap;overflow-wrap:anywhere}
+.wan{margin:4px 0 14px;border:1px dashed #d9c7f0;border-radius:12px;padding:10px 14px;background:#fcfaff}
+.wan summary{cursor:pointer;font-weight:600;color:#4b2a8c}
+.wan[open] summary{margin-bottom:10px}
+
+/* ---- Leitor de PDF no celular ---- */
+.modal.big .pvt{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:16px}
+.pvbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.pvbar .btn{min-width:44px;min-height:40px}
+.modal.big .pvpages{flex:1;min-height:0;overflow:auto;background:#e9e5f2;border-radius:8px;padding:4px 8px;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y pinch-zoom}
+.pvpage{position:relative;margin:8px auto;background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.25)}
+.pvpage canvas{display:block;width:100%;height:100%}
+
+/* ---- Impressão do histórico ---- */
+.printhead{display:none}
+@media print{
+  @page{margin:14mm}
+  body{background:#fff!important;color:#000}
+  .bar,#toasts,.top,.side,.noprint,.nbadge,.modal{display:none!important}
+  .shell,.body{display:block!important}
+  main{padding:0!important;margin:0!important;max-width:none!important;animation:none!important}
+  .printhead{display:block;margin:0 0 10px;padding-bottom:8px;border-bottom:2px solid #000}
+  .printhead b{font-size:18px}
+  .hhead{margin-bottom:8px}
+  .hhead h1{font-size:20px}
+  .panel{box-shadow:none!important;border:0!important;padding:0!important;background:none!important}
+  .stp li{break-inside:avoid;page-break-inside:avoid}
+  .stp .dot,.chip{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .stp .when{color:#000!important;font-size:13px}
+  a{color:inherit;text-decoration:none}
+}
+.hhead #pr{margin-left:auto}
