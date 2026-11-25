@@ -89,6 +89,24 @@ function confirmPwd({ title, html, pre, run, ok = "Excluir definitivamente" }) {
   } });
 }
 
+// Rascunhos locais: filtros e textos digitados ficam guardados neste aparelho (localStorage) e voltam ao reabrir a tela.
+// Senhas e arquivos nunca são guardados. O rascunho é apagado quando a ação é concluída.
+function keepDraft(root, scope) {
+  const key = `pw:${me.id}:${scope}`, SKIP = ["password", "file", "button", "submit", "hidden"];
+  const fields = [...root.querySelectorAll("input[id],select[id],textarea[id]")].filter((e) => !SKIP.includes(e.type) && !e.dataset.nodraft);
+  try {
+    const st = JSON.parse(localStorage.getItem(key) || "null");
+    if (st && Date.now() - st._t < 30 * 864e5) {
+      for (const e of fields) if (e.id in st.v) { if (e.type === "checkbox") e.checked = !!st.v[e.id]; else e.value = st.v[e.id]; }
+      root.querySelectorAll("details.wan").forEach((d) => { if ([...d.querySelectorAll("input,textarea")].some((e) => e.value)) d.open = true; });
+    }
+  } catch { /* sem armazenamento local: segue sem rascunho */ }
+  const save = () => { try { localStorage.setItem(key, JSON.stringify({ _t: Date.now(), v: Object.fromEntries(fields.map((e) => [e.id, e.type === "checkbox" ? e.checked : e.value])) })); } catch {} };
+  root.addEventListener("input", save); root.addEventListener("change", save);
+  return () => { try { localStorage.removeItem(key); } catch {} };
+}
+let clearDraft = () => {};
+
 // Anexos: só PDF, enviados exatamente como estão (sem compressão e sem conversão).
 const MAX_FILES = 10, MAX_MB = 50;
 const pdfField = (id, label, { multiple = false, required = false } = {}) => `<div class="field"><label for="${id}">${label}</label><input id="${id}" type="file" accept="application/pdf" ${multiple ? "multiple" : ""} ${required ? "required" : ""}><div class="note">O PDF é enviado como está, sem compressão (até ${MAX_MB} MB cada).</div></div>`;
@@ -454,6 +472,7 @@ function stepLi(st, p, files, recs) {
     L.push(seen());
     if (st.exited_at) {
       L.push(st.comment ? pwl("Informações e decisões tomadas", st.comment) : "Informações e decisões tomadas: não registradas");
+      if (pdfs.length) L.push(`Ofício(s) anexado(s): ${pdfs.map((f) => esc(f.file_name)).join("; ")}`);
       L.push(`Encaminhado ao Protocolo para arquivamento em ${fmt(st.exited_at)}${who(st.author)}`);
     } else if (st.entered_at) L.push("Em andamento na Deliberação");
   } else if (st.holder === "u1" && st.leg === "volta") {
@@ -465,18 +484,12 @@ function stepLi(st, p, files, recs) {
       if (st.comment) L.push(pwl("Observação do arquivamento", st.comment));
       L.push("Ciclo do histórico encerrado.");
     } else L.push("Aguardando arquivamento pelo Protocolo");
-  } else { // movimentações antigas (setores externos), só para consulta
-    title = st.holder === "sector" ? `${recs.find((r) => r.rid === st.recipient_id)?.sector || "Setor"} (envio antigo)` : `${STEP[st.holder]} (retorno antigo)`;
-    if (st.entered_at) L.push(`Chegou em ${fmt(st.entered_at)}`);
-    if (st.exited_at) L.push(`Saída em ${fmt(st.exited_at)}${who(st.author)}`);
-    if (st.comment) L.push(pwl("Registro", st.comment));
-    if (st.out_number) L.push(`Protocolo registrado: <b>${esc(st.out_number)}</b> de ${fmtDay(st.out_date)}`);
-    files2();
   }
   const done = !!st.exited_at, cur = !done && !!st.entered_at;
   return `<li class="${done ? "done" : cur ? "cur" : "wait"}"><span class="dot">${done ? ICON.ok : ""}</span><div><b>${title}${person ? ` · <span class="who2">${esc(person)}</span>` : ""}</b>${L.filter(Boolean).map((l) => `<div class="when">${l}</div>`).join("")}</div></li>`;
 }
-const histList = (d) => `<ol class="stp">${d.steps.map((st) => stepLi(st, d.protocol, d.files, d.recipients)).join("")}${d.protocol.closed_at ? `<li class="done"><span class="dot">${ICON.ok}</span><div><b>Ciclo encerrado (arquivado)</b><div class="when">Processo arquivado em ${fmt(d.protocol.closed_at)}. Não há mais movimentações.</div></div></li>` : ""}</ol>`;
+const curStep = (st) => !st.recipient_id && (st.leg === "ida" ? ["u1", "u2", "u3"].includes(st.holder) : st.holder === "u1"); // sem os envios antigos a setores
+const histList = (d) => `<ol class="stp">${d.steps.filter(curStep).map((st) => stepLi(st, d.protocol, d.files, d.recipients)).join("")}${d.protocol.closed_at ? `<li class="done"><span class="dot">${ICON.ok}</span><div><b>Ciclo encerrado (arquivado)</b><div class="when">Processo arquivado em ${fmt(d.protocol.closed_at)}. Não há mais movimentações.</div></div></li>` : ""}</ol>`;
 
 const views = {
   async config() {
@@ -534,7 +547,7 @@ const views = {
     const d = await api("/api/protocols/" + id + "?h=1"), p = d.protocol;
     shell(`<div class="hhead"><a class="backbtn noprint" href="#/historico" title="Voltar ao histórico" aria-label="Voltar ao histórico">${ICON.back}</a><div><h1>${esc(p.protocol_number)}${p.subject ? " — " + esc(p.subject) : ""}</h1><p class="muted">${stageChip(p)}${p.closed_at ? ` &nbsp; Arquivado em ${fmt(p.closed_at)}` : ""}</p></div><button class="btn sec sm noprint" id="pr" type="button">Imprimir histórico</button></div>
       <div class="printhead"><b>${esc(org.name)}</b><div>Histórico interno de movimentações · Protocolo nº ${esc(p.protocol_number)}</div><small>Impresso em ${fmt(new Date().toISOString())} por ${esc(me.name)}</small></div>
-      <div class="hist">${d.steps.length ? histList(d) : `<div class="panel empty">Sem movimentações registradas.</div>`}</div>`, "h");
+      <div class="hist">${d.steps.some(curStep) ? histList(d) : `<div class="panel empty">Sem movimentações registradas.</div>`}</div>`, "h");
     bindFiles($("main"));
     $("#pr").onclick = () => window.print();
     poll();
@@ -547,13 +560,14 @@ const views = {
     ${pdfField("a", "PDF do documento (pode anexar mais de um)", { multiple: true, required: true })}
     <p class="muted">Ao enviar, o documento é encaminhado ao Despacho. Os arquivos ficam guardados na nuvem e acompanham o processo até o arquivamento.</p>
     <button class="btn">Enviar ao Despacho</button></form>`, "n");
+    const clr = keepDraft($("#f"), "novo");
     $("#f").onsubmit = guard(async (e) => {
       e.preventDefault();
       confirmDo("Encaminhar este protocolo ao Despacho? Essa ação não pode ser desfeita.", async () => {
         const pdfs = await uploadFiles($("#a"));
         if (!pdfs.length) throw new Error("Anexe o PDF do documento");
         const r = await api("/api/protocols", { method: "POST", body: { protocol_number: $("#pn").value, entry_date: $("#pd").value, entry_time: $("#pt").value, oficio_number: $("#po").value, subject: $("#s").value, description: $("#d").value, file_ids: pdfs } });
-        toast("Protocolo enviado ao Despacho: " + r.protocol_number); location.hash = "#/central/protocolos";
+        clr(); toast("Protocolo enviado ao Despacho: " + r.protocol_number); location.hash = "#/central/protocolos";
       });
     });
   },
@@ -643,6 +657,7 @@ const views = {
     }));
     // Excluir um protocolo isolado: busca pelo número e confirma com a senha.
     const sres = $("#sres");
+    keepDraft($("#sf"), "dev-busca");
     $("#sf").onsubmit = guard(async (e) => {
       e.preventDefault();
       const q = $("#sn").value.trim();
@@ -659,27 +674,30 @@ const views = {
   },
   // Painel do protocolo: dados, documentos e a ação da etapa (Despacho, Deliberação ou arquivamento).
   async protocolo(pid) {
-    const d = await api("/api/protocols/" + pid), { protocol: p, steps, files } = d, dev = me.role === "dev";
+    const d = await api("/api/protocols/" + pid), { protocol: p, steps } = d, files = d.files.filter((f) => !f.recipient_id), dev = me.role === "dev";
     const s = me.step || (dev ? ({ u2: 2, u3: 3, sector: 1 })[p.stage] || 0 : 0), open = !p.closed_at;
-    const pdfs = files.filter((f) => f.mime_type === "application/pdf");
+    const pdfs = files.filter((f) => f.mime_type === "application/pdf" && f.holder !== "u3"), oficios = files.filter((f) => f.holder === "u3");
     const prev = steps.filter((x) => !x.recipient_id && x.leg === "ida" && x.exited_at).pop();
     let act = "";
     if (open && p.stage === "u2" && s === 2) act = `<div class="panel act"><h2>Despacho — registrar e encaminhar à Deliberação</h2>${prevBox(prev, "Recebido de")}<form id="ff"><div class="field"><label for="fd">Informações e ações realizadas</label><textarea id="fd" required maxlength="5000" placeholder="Descreva o que foi analisado e as ações realizadas no Despacho."></textarea></div><button class="btn">Encaminhar à Deliberação</button></form></div>`;
-    else if (open && p.stage === "u3" && s === 3) act = `<div class="panel act"><h2>Deliberação — registrar e encaminhar ao Protocolo</h2>${prevBox(prev, "Despacho")}<form id="ff"><div class="field"><label for="fd">Informações e decisões tomadas</label><textarea id="fd" required maxlength="5000" placeholder="Descreva as informações e as decisões tomadas na Deliberação."></textarea></div>${waSection("wa")}<p class="muted">Ao encaminhar, o processo volta ao Protocolo para ser arquivado.</p><button class="btn">Encaminhar ao Protocolo</button></form></div>`;
+    else if (open && p.stage === "u3" && s === 3) act = `<div class="panel act"><h2>Deliberação — registrar e encaminhar ao Protocolo</h2>${prevBox(prev, "Despacho")}<form id="ff"><div class="field"><label for="fd">Informações e decisões tomadas</label><textarea id="fd" required maxlength="5000" placeholder="Descreva as informações e as decisões tomadas na Deliberação."></textarea></div>${pdfField("of", "Ofício (PDF, opcional) — fica anexado ao processo, junto com os demais arquivos", { multiple: true })}${waSection("wa")}<p class="muted">Ao encaminhar, o processo volta ao Protocolo para ser arquivado.</p><button class="btn">Encaminhar ao Protocolo</button></form></div>`;
     else if (open && p.stage === "sector" && s === 1) act = `<div class="panel act"><h2>Arquivamento</h2>${prevBox(prev, "Recebido da Deliberação")}<form id="af"><div class="field"><label for="ac">Observação do arquivamento (opcional)</label><textarea id="ac" maxlength="5000"></textarea></div><p class="muted">Ao arquivar, o ciclo do histórico é encerrado e não pode ser reaberto.</p><button class="btn">Arquivar processo</button></form></div>`;
     shell(`<p><a class="backbtn" href="#/central/protocolos" title="Voltar à lista" aria-label="Voltar à lista">${ICON.back}</a></p><h1>${esc(p.protocol_number)}${p.subject ? " — " + esc(p.subject) : ""}</h1>
-    <div class="panel"><p><b>Ato administrativo nº ${esc(p.protocol_number)}</b> &nbsp; ${stageChip(p)}</p>${p.closed_at ? `<p class="exwarn ok">Processo arquivado em ${fmt(p.closed_at)}. O ciclo do histórico está encerrado.</p>` : ""}<p class="muted">Protocolado em ${fmtDay(p.entry_date)}${p.entry_time ? " às " + esc(p.entry_time) : ""}${p.oficio_number ? " · Ofício nº " + esc(p.oficio_number) : ""}</p><p class="pw">${esc(p.description)}</p>${p.review_description ? `<h3 class="sech">Informações e ações do Despacho</h3><p class="pw">${esc(p.review_description)}</p>` : ""}<h2 class="sech">Documento e anexos</h2>${fileList(pdfs) || '<p class="muted">Sem arquivos.</p>'}<p><a class="btn sec sm" style="text-decoration:none" href="#/historico/${p.id}">Ver histórico de movimentações</a> ${dev ? `<button class="btn sec sm" id="dp">Excluir protocolo</button>` : ""}</p></div>
+    <div class="panel"><p><b>Ato administrativo nº ${esc(p.protocol_number)}</b> &nbsp; ${stageChip(p)}</p>${p.closed_at ? `<p class="exwarn ok">Processo arquivado em ${fmt(p.closed_at)}. O ciclo do histórico está encerrado.</p>` : ""}<p class="muted">Protocolado em ${fmtDay(p.entry_date)}${p.entry_time ? " às " + esc(p.entry_time) : ""}${p.oficio_number ? " · Ofício nº " + esc(p.oficio_number) : ""}</p><p class="pw">${esc(p.description)}</p>${p.review_description ? `<h3 class="sech">Informações e ações do Despacho</h3><p class="pw">${esc(p.review_description)}</p>` : ""}<h2 class="sech">Documento e anexos</h2>${fileList(pdfs) || '<p class="muted">Sem arquivos.</p>'}${oficios.length ? `<h3 class="sech">Ofício da Deliberação</h3>${fileList(oficios)}` : ""}<p><a class="btn sec sm" style="text-decoration:none" href="#/historico/${p.id}">Ver histórico de movimentações</a> ${dev ? `<button class="btn sec sm" id="dp">Excluir protocolo</button>` : ""}</p></div>
     ${act}`, "l");
     bindFiles($("main")); poll();
     if ($("#dp")) $("#dp").onclick = () => confirmPwd({ title: "Excluir protocolo", html: `<p>Excluir o protocolo <b>${esc(p.protocol_number)}</b>, os arquivos e o histórico definitivamente? Não dá para desfazer.</p>`, run: async () => { await api("/api/protocols/" + pid, { method: "DELETE" }); toast("Protocolo excluído"); location.hash = "#/central/protocolos"; } });
     const subj = p.subject ? " — " + p.subject : "";
+    clearDraft = $("#ff") ? keepDraft($("#ff"), "p" + pid) : $("#af") ? keepDraft($("#af"), "a" + pid) : () => {};
     if ($("#ff")) $("#ff").onsubmit = guard(async (e) => {
       e.preventDefault();
       const txt = $("#fd").value.trim();
       if (!txt) throw new Error(s === 2 ? "Descreva as informações e ações realizadas" : "Descreva as informações e decisões tomadas");
       const wa = s === 3 ? waRead("wa", `Protocolo nº ${p.protocol_number}${subj} foi encaminhado ao Protocolo para arquivamento. ${org.name}`) : null; // WhatsApp: só na Deliberação
       confirmDo(s === 2 ? "Encaminhar à Deliberação? Essa ação não pode ser desfeita." : "Encaminhar ao Protocolo para arquivamento? Essa ação não pode ser desfeita.", async () => {
-        await api(`/api/protocols/${pid}/forward`, { method: "POST", body: { description: txt } });
+        const file_ids = s === 3 ? await uploadFiles($("#of")) : [];
+        await api(`/api/protocols/${pid}/forward`, { method: "POST", body: { description: txt, file_ids } });
+        clearDraft();
         poll(); toast(s === 2 ? "Encaminhado à Deliberação" : "Encaminhado ao Protocolo"); location.hash = "#/central/protocolos";
         if (wa) offerWhatsApp(wa);
       });
@@ -688,7 +706,7 @@ const views = {
       e.preventDefault();
       confirmDo("Arquivar este processo? O ciclo do histórico será encerrado e não poderá ser reaberto.", async () => {
         await api(`/api/protocols/${pid}/archive`, { method: "POST", body: { comment: $("#ac").value } });
-        poll(); toast("Processo arquivado"); route();
+        clearDraft(); poll(); toast("Processo arquivado"); route();
       });
     });
   },
@@ -698,8 +716,9 @@ const views = {
 function archiveDialog(r, done) {
   const m = dialog(`<h2>Arquivar ${esc(r.protocol_number)}</h2><p class="muted">O processo será arquivado e o ciclo do histórico será encerrado. Essa ação não pode ser desfeita.</p><div class="field"><label for="ac2">Observação do arquivamento (opcional)</label><textarea id="ac2" maxlength="5000"></textarea></div>`, { ok: "Arquivar", onOk: async () => {
     await api(`/api/protocols/${r.pid}/archive`, { method: "POST", body: { comment: $("#ac2", m).value } });
-    toast("Processo arquivado"); poll(); done();
+    clr(); toast("Processo arquivado"); poll(); done();
   } });
+  const clr = keepDraft(m, "arq" + r.pid);
 }
 async function staffList(title, active, mode = "prot") {
   const arq = mode === "arq", hist = mode === "hist";
@@ -716,6 +735,7 @@ async function staffList(title, active, mode = "prot") {
     document.querySelectorAll("[data-pg]").forEach((b) => (b.onclick = () => { load(+b.dataset.pg); window.scrollTo({ top: 0 }); }));
     document.querySelectorAll("[data-ar]").forEach((b) => (b.onclick = () => archiveDialog(rows.find((x) => x.pid == b.dataset.ar), () => load(cur))));
   });
+  keepDraft($("#ff"), "lista-" + mode);
   $("#ff").onsubmit = (e) => { e.preventDefault(); load(1); };
   $("#od").onchange = () => load(1);
   load();
